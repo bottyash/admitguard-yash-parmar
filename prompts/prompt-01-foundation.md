@@ -1,6 +1,6 @@
-###Create Folder Structure Prompt
-'''
-give me cmd for this file structure:
+**Create Folder Structure Prompt**
+```
+_give me cmd for this file structure:_
 admitguard-{your-name}/
 ├── README.md                    # Project overview, approach, setup, screenshots
 ├── research-notes.md            # What you read/watched about Vibe Coding (Wednesday evening)
@@ -23,4 +23,4 @@ admitguard-{your-name}/
 │   └── presentation.pdf         # Final Solution Proposal deck
 ├── sprint-log.md                # Sprint-by-sprint log of what you did
 └── .gitignore
-'''
+```
