@@ -10,6 +10,7 @@ import os
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from routes.candidates import candidates_bp
+from routes.admin import admin_bp
 from db import init_db
 
 # Resolve path to frontend directory (../frontend relative to backend/)
@@ -22,14 +23,18 @@ def create_app():
     """Create and configure the Flask application."""
     app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
+    # Secret key for session support (admin login)
+    app.secret_key = "admitguard-secret-key-change-in-production"
+
     # Initialize SQLite database (creates tables on first run)
     init_db()
 
     # Enable CORS for all API routes
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
     # Register API blueprints
     app.register_blueprint(candidates_bp)
+    app.register_blueprint(admin_bp)
 
     # Health check endpoint
     @app.route("/api/health", methods=["GET"])
@@ -41,6 +46,11 @@ def create_app():
             "storage": "SQLite",
             "description": "AdmitGuard — Admission Data Validation API"
         }), 200
+
+    # Serve admin panel
+    @app.route("/prabandhak")
+    def serve_admin():
+        return send_from_directory(FRONTEND_DIR, "admin.html")
 
     # Serve frontend (index.html at root and any static assets)
     @app.route("/", defaults={"path": ""})

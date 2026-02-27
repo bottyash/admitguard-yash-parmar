@@ -163,3 +163,57 @@ Add data portability (export), enhance usability (search/shortcuts), and finaliz
   - **README.md**: Comprehensive manual including runner guide, API reference, and rule lookup.
   - **R.I.C.E. Prompts**: Fully documented 12-file prompt log in `prompts/`.
   - **Audit Polish**: Custom scrollbars and refined responsive layouts.
+
+---
+
+## Sprint 5 — Admin Panel (प्रबंधक) ✅
+**Date:** 2026-02-27 | **Tag:** Admin Panel
+
+### Goal
+Add a protected admin interface at `/prabandhak` for viewing, editing, and deleting candidate records with session-based authentication.
+
+### What Was Built
+- **Admin Routes** (`routes/admin.py`):
+  - `POST /api/admin/login` — authenticate with username/password (default: `admin` / `admin123`)
+  - `POST /api/admin/logout` — clear session
+  - `GET  /api/admin/status` — check login state
+  - `GET  /api/admin/candidates` — list all candidates + stats (protected)
+  - `PUT  /api/admin/candidates/<id>` — update candidate fields (protected)
+  - `DELETE /api/admin/candidates/<id>` — delete candidate (protected)
+  - `@admin_required` decorator for route protection (returns 401)
+- **Model Extensions** (`models/candidate.py`):
+  - `update_candidate()` — update editable fields with `ADMIN_EDIT` audit log entry
+  - `delete_candidate()` — delete record with `ADMIN_DELETE` audit log entry
+- **Admin Frontend** (`admin.html` + `admin.css` + `admin.js`):
+  - Glassmorphism login screen with error handling
+  - Dashboard with stats cards (total, flagged, exception rate)
+  - Searchable candidates data table with Edit and Delete buttons
+  - Edit modal — pre-filled form for all candidate fields
+  - Delete confirmation modal with candidate details
+  - Theme toggle (shared with main app)
+
+### Files
+```
+src/backend/
+├── app.py                      # Updated: secret key, admin blueprint, /prabandhak route
+├── models/
+│   └── candidate.py            # Updated: update_candidate(), delete_candidate()
+└── routes/
+    └── admin.py                # NEW: Admin API endpoints + auth
+
+src/frontend/
+├── admin.html                  # NEW: Admin panel page
+├── admin.css                   # NEW: Admin-specific styles
+└── admin.js                    # NEW: Admin frontend logic
+```
+
+### Testing Results
+| Test | Result |
+|------|--------|
+| Login screen renders at `/prabandhak` | ✅ Pass |
+| Wrong credentials show error message | ✅ Pass |
+| Correct login shows dashboard + table | ✅ Pass |
+| Stats cards display accurate counts | ✅ Pass |
+| Edit modal updates candidate in database | ✅ Pass |
+| Delete removes candidate + audit logged | ✅ Pass |
+| Logout clears session, APIs return 401 | ✅ Pass |

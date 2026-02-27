@@ -158,6 +158,96 @@ def get_audit_log():
     return [_audit_row_to_dict(r) for r in rows]
 
 
+def update_candidate(candidate_id, data):
+    """
+    Update editable fields of an existing candidate.
+    Returns the updated candidate dict, or None if not found.
+    """
+    # Only allow updating these fields
+    editable_fields = [
+        "full_name", "email", "phone", "date_of_birth",
+        "highest_qualification", "graduation_year", "percentage_cgpa",
+        "score_type", "screening_test_score", "interview_status",
+        "aadhaar", "offer_letter_sent",
+    ]
+
+    updates = []
+    values = []
+    for field in editable_fields:
+        if field in data:
+            updates.append(f"{field} = ?")
+            values.append(str(data[field]).strip() if data[field] is not None else "")
+
+    if not updates:
+        return get_candidate_by_id(candidate_id)
+
+    values.append(candidate_id)
+    sql = f"UPDATE candidates SET {', '.join(updates)} WHERE id = ?"
+
+    conn = get_connection()
+    with conn:
+        cursor = conn.execute(sql, values)
+        if cursor.rowcount == 0:
+            conn.close()
+            return None
+
+        # Audit log entry for the edit
+        now = datetime.now().isoformat()
+        log_id = str(uuid.uuid4())
+        candidate = conn.execute(
+            "SELECT full_name, email FROM candidates WHERE id = ?", (candidate_id,)
+        ).fetchone()
+        conn.execute("""
+            INSERT INTO audit_log (
+                id, candidate_id, candidate_name, candidate_email,
+                action, exception_count, flagged_for_review, exceptions, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            log_id, candidate_id,
+            candidate["full_name"] if candidate else "",
+            candidate["email"] if candidate else "",
+            "ADMIN_EDIT",
+            0, 0, json.dumps([]), now,
+        ))
+    conn.close()
+
+    return get_candidate_by_id(candidate_id)
+
+
+def delete_candidate(candidate_id):
+    """
+    Delete a candidate by ID. Returns True if deleted, False if not found.
+    Also logs the deletion to the audit log.
+    """
+    conn = get_connection()
+    candidate = conn.execute(
+        "SELECT full_name, email FROM candidates WHERE id = ?", (candidate_id,)
+    ).fetchone()
+
+    if not candidate:
+        conn.close()
+        return False
+
+    with conn:
+        # Log before deleting
+        now = datetime.now().isoformat()
+        log_id = str(uuid.uuid4())
+        conn.execute("""
+            INSERT INTO audit_log (
+                id, candidate_id, candidate_name, candidate_email,
+                action, exception_count, flagged_for_review, exceptions, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            log_id, candidate_id,
+            candidate["full_name"], candidate["email"],
+            "ADMIN_DELETE",
+            0, 0, json.dumps([]), now,
+        ))
+        conn.execute("DELETE FROM candidates WHERE id = ?", (candidate_id,))
+    conn.close()
+    return True
+
+
 def clear_all_candidates():
     """Clear all data (for testing only)."""
     conn = get_connection()

@@ -15,6 +15,7 @@ AdmitGuard replaces error-prone Excel-based admission data entry with a form tha
 - 📜 **Audit log** — every submission logged with timestamps and exception details
 - 📊 **Dashboard** — live stats (total submissions, flagged count, exception rate)
 - 📥 **Export** — download all candidates as CSV or JSON
+- 🔐 **Admin panel** — protected dashboard at `/prabandhak` for editing & deleting records
 - 🌙 **Dark / Light mode** — theme persists via localStorage
 - 💾 **SQLite persistence** — data survives server restarts
 
@@ -32,6 +33,9 @@ python app.py
 
 # 3. Open in browser
 http://localhost:5000
+
+# 4. Admin panel (login: admin / admin123)
+http://localhost:5000/prabandhak
 ```
 
 No separate frontend server needed — Flask serves both the API and the UI.
@@ -54,11 +58,15 @@ admitguard-yash-parmar/
 │   │   │   ├── strict_validators.py
 │   │   │   └── soft_validators.py  # Exception + rationale logic
 │   │   └── routes/
-│   │       └── candidates.py       # All API endpoints
+│   │       ├── candidates.py       # All API endpoints
+│   │       └── admin.py            # Admin panel API + auth
 │   └── frontend/
 │       ├── index.html              # Single-page app (3 tabs)
 │       ├── styles.css              # Dark/light design system
-│       └── app.js                  # API-driven validation (zero client-side)
+│       ├── app.js                  # API-driven validation (zero client-side)
+│       ├── admin.html              # Admin panel UI
+│       ├── admin.css               # Admin-specific styles
+│       └── admin.js                # Admin panel logic
 ├── prompts/                        # R.I.C.E. prompts used (vibe coding log)
 ├── sprint-log.md                   # Sprint-by-sprint build log
 └── .gitignore
@@ -80,6 +88,12 @@ admitguard-yash-parmar/
 | `GET`  | `/api/export/csv` | Download all candidates as CSV |
 | `GET`  | `/api/export/json` | Download all candidates as JSON |
 | `GET`  | `/api/health` | Health check |
+| `GET`  | `/prabandhak` | Admin panel UI |
+| `POST` | `/api/admin/login` | Admin login |
+| `POST` | `/api/admin/logout` | Admin logout |
+| `GET`  | `/api/admin/candidates` | List candidates (admin, protected) |
+| `PUT`  | `/api/admin/candidates/<id>` | Edit candidate (admin, protected) |
+| `DELETE` | `/api/admin/candidates/<id>` | Delete candidate (admin, protected) |
 
 ---
 
@@ -143,6 +157,7 @@ RULE_MAX_EXCEPTIONS_BEFORE_FLAG = 3   # Allow more exceptions before flagging
 | 3 | Frontend + audit log UI | ✅ |
 | 3+ | SQLite database | ✅ |
 | 4 | Export + polish + README | ✅ |
+| 5 | Admin panel (प्रबंधक) | ✅ |
 
 ---
 

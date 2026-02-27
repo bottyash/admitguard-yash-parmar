@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>प्रबंधक — AdmitGuard Admin Panel</title>
+    <meta name="description"
+        content="AdmitGuard Admin Panel: Manage candidates, edit records, and monitor submissions." />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="admin.css" />
+</head>
+
+<body>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+    <!-- ===================================================================
+         LOGIN SCREEN
+         =================================================================== -->
+    <div id="login-screen" class="login-screen">
+        <div class="login-card">
+            <div class="login-header">
+                <div class="login-icon">🔐</div>
+                <h1>प्रबंधक</h1>
+                <p class="login-subtitle">AdmitGuard Admin Panel</p>
+            </div>
+            <form id="login-form" autocomplete="off">
+                <div class="login-field">
+                    <label for="admin-username">Username</label>
+                    <input type="text" id="admin-username" class="field-input" placeholder="Enter username"
+                        autocomplete="username" required />
+                </div>
+                <div class="login-field">
+                    <label for="admin-password">Password</label>
+                    <input type="password" id="admin-password" class="field-input" placeholder="Enter password"
+                        autocomplete="current-password" required />
+                </div>
+                <div id="login-error" class="login-error" hidden></div>
+                <button type="submit" id="login-btn" class="btn btn-primary login-submit">
+                    🔓 Sign In
+                </button>
+            </form>
+            <p class="login-hint">Default: admin / admin123</p>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         ADMIN DASHBOARD (hidden until login)
+         =================================================================== -->
+    <div id="admin-dashboard" class="app-wrapper" hidden>
+
+        <!-- Header -->
+        <header class="app-header">
+            <div class="brand">
+                <div class="brand-icon" aria-hidden="true">🛡️</div>
+                <div>
+                    <h1>प्रबंधक <span class="admin-badge">ADMIN</span></h1>
+                    <p>AdmitGuard — Admin Panel</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <span id="admin-user-label" class="admin-user-label"></span>
+                <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
+                    🌙 <span>Dark</span>
+                </button>
+                <button id="logout-btn" class="btn btn-secondary btn-sm">🚪 Logout</button>
+            </div>
+        </header>
+
+        <!-- Stats Row -->
+        <div class="stats-grid" style="margin-bottom: var(--gap-xl);">
+            <div class="stat-card">
+                <div class="stat-icon">👥</div>
+                <div class="stat-value" id="admin-stat-total">—</div>
+                <div class="stat-label">Total Candidates</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🚨</div>
+                <div class="stat-value" id="admin-stat-flagged">—</div>
+                <div class="stat-label">Flagged for Review</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">⚠️</div>
+                <div class="stat-value" id="admin-stat-rate">—</div>
+                <div class="stat-label">Exception Rate</div>
+            </div>
+        </div>
+
+        <!-- Candidates Table -->
+        <div class="card">
+            <div class="admin-toolbar">
+                <div class="admin-toolbar-left">
+                    <h2 class="card-title" style="margin-bottom:0">📋 All Candidates</h2>
+                    <span id="admin-candidate-count" class="count-badge">0 records</span>
+                </div>
+                <div class="admin-toolbar-right">
+                    <input type="search" id="admin-search" class="field-input" placeholder="🔍 Search by name or email…"
+                        style="max-width:280px" aria-label="Search candidates" />
+                    <button class="btn btn-secondary btn-sm" id="admin-refresh-btn">↻ Refresh</button>
+                </div>
+            </div>
+
+            <div class="admin-table-wrapper">
+                <table class="audit-table admin-table" aria-label="Candidates table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Qualification</th>
+                            <th>Interview</th>
+                            <th>Exceptions</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="admin-tbody">
+                        <tr>
+                            <td colspan="8" style="text-align:center;padding:48px;color:var(--text-muted)">
+                                Loading candidates…
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="admin-empty" class="empty-state" hidden>
+                <div class="empty-icon">📭</div>
+                <p>No candidates found.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         EDIT MODAL
+         =================================================================== -->
+    <div id="edit-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+        aria-labelledby="edit-modal-title">
+        <div class="modal edit-modal">
+            <div class="modal-header">
+                <span class="modal-icon">✏️</span>
+                <h2 class="modal-title" id="edit-modal-title">Edit Candidate</h2>
+                <p class="modal-subtitle" id="edit-modal-subtitle"></p>
+            </div>
+            <form id="edit-form" class="edit-form">
+                <input type="hidden" id="edit-id" />
+                <div class="edit-grid">
+                    <div class="edit-field">
+                        <label for="edit-full_name">Full Name</label>
+                        <input type="text" id="edit-full_name" class="field-input" />
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-email">Email</label>
+                        <input type="email" id="edit-email" class="field-input" />
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-phone">Phone</label>
+                        <input type="tel" id="edit-phone" class="field-input" maxlength="10" />
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-date_of_birth">Date of Birth</label>
+                        <input type="date" id="edit-date_of_birth" class="field-input" />
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-highest_qualification">Qualification</label>
+                        <select id="edit-highest_qualification" class="field-input">
+                            <option value="B.Tech">B.Tech</option>
+                            <option value="B.E.">B.E.</option>
+                            <option value="B.Sc">B.Sc</option>
+                            <option value="BCA">BCA</option>
+                            <option value="M.Tech">M.Tech</option>
+                            <option value="M.Sc">M.Sc</option>
+                            <option value="MCA">MCA</option>
+                            <option value="MBA">MBA</option>
+                        </select>
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-graduation_year">Graduation Year</label>
+                        <input type="number" id="edit-graduation_year" class="field-input" min="2000" max="2030" />
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-percentage_cgpa">Score</label>
+                        <input type="number" id="edit-percentage_cgpa" class="field-input" step="0.01" />
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-screening_test_score">Screening Score</label>
+                        <input type="number" id="edit-screening_test_score" class="field-input" min="0" max="100" />
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-interview_status">Interview Status</label>
+                        <select id="edit-interview_status" class="field-input">
+                            <option value="Cleared">Cleared</option>
+                            <option value="Waitlisted">Waitlisted</option>
+                            <option value="Rejected">Rejected</option>
+                        </select>
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-aadhaar">Aadhaar</label>
+                        <input type="text" id="edit-aadhaar" class="field-input" maxlength="12" />
+                    </div>
+                    <div class="edit-field">
+                        <label for="edit-offer_letter_sent">Offer Letter</label>
+                        <select id="edit-offer_letter_sent" class="field-input">
+                            <option value="Yes">Yes</option>
+                            <option value="No">No</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="edit-cancel" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" id="edit-save" class="btn btn-primary">💾 Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         DELETE CONFIRM MODAL
+         =================================================================== -->
+    <div id="delete-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+        <div class="modal delete-modal">
+            <div class="modal-header">
+                <span class="modal-icon">🗑️</span>
+                <h2 class="modal-title">Delete Candidate</h2>
+                <p class="modal-subtitle" id="delete-modal-subtitle">Are you sure you want to delete this candidate?
+                    This action cannot be undone.</p>
+            </div>
+            <div id="delete-candidate-info" class="delete-info"></div>
+            <div class="modal-actions">
+                <button id="delete-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="delete-confirm" class="btn btn-danger">🗑️ Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+
+</html>
