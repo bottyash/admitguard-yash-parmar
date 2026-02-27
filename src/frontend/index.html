@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AdmitGuard — Admission Data Validation</title>
+    <meta name="description"
+        content="AdmitGuard: Real-time admission data validation and compliance system for IIT programs." />
+    <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+    <!-- Success Modal -->
+    <div id="success-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-icon">🎉</span>
+                <h2 class="modal-title" id="modal-title">Candidate Submitted</h2>
+                <p class="modal-subtitle">The record has been saved successfully.</p>
+            </div>
+            <div class="modal-summary" id="modal-summary"></div>
+            <div id="modal-warning" class="modal-warning" hidden></div>
+            <div class="modal-actions">
+                <button id="modal-close" class="btn btn-secondary">Close</button>
+                <button id="modal-new-btn" class="btn btn-primary">➕ New Entry</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Wrapper -->
+    <div class="app-wrapper">
+
+        <!-- Header -->
+        <header class="app-header">
+            <div class="brand">
+                <div class="brand-icon" aria-hidden="true">🛡️</div>
+                <div>
+                    <h1>AdmitGuard</h1>
+                    <p>Admission Data Validation &amp; Compliance System</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
+                    🌙 <span>Dark</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs" role="tablist" aria-label="Application sections">
+            <button class="nav-tab active" data-panel="tab-form" role="tab" aria-selected="true" id="nav-form">
+                📋 Candidate Entry
+            </button>
+            <button class="nav-tab" data-panel="tab-audit" role="tab" aria-selected="false" id="nav-audit">
+                📜 Audit Log
+            </button>
+            <button class="nav-tab" data-panel="tab-dashboard" role="tab" aria-selected="false" id="nav-dashboard">
+                📊 Dashboard
+            </button>
+        </nav>
+
+        <!-- =====================================================================
+         Tab 1: Candidate Entry Form
+         ===================================================================== -->
+        <div id="tab-form" class="tab-panel active" role="tabpanel" aria-labelledby="nav-form">
+
+            <!-- Exception Counter Badge -->
+            <div id="exception-count-badge" class="exception-counter none" aria-live="polite">
+                ✓ No exceptions
+            </div>
+
+            <form id="candidate-form" novalidate autocomplete="off">
+
+                <!-- Section 1: Personal Information -->
+                <div class="form-section">
+                    <div class="form-section-title">📁 Personal Information</div>
+
+                    <div class="form-grid">
+
+                        <!-- Full Name -->
+                        <div class="field-group">
+                            <label class="field-label" for="full_name">
+                                <span class="required-dot" title="Required"></span>
+                                Full Name
+                                <span class="rule-badge strict">Strict</span>
+                            </label>
+                            <div class="field-status">
+                                <input type="text" id="full_name" name="full_name" class="field-input"
+                                    placeholder="e.g. Yash Parmar" aria-describedby="full_name-msg"
+                                    autocomplete="off" />
+                            </div>
+                            <span id="full_name-msg" class="field-message" role="alert"></span>
+                        </div>
+
+                        <!-- Email -->
+                        <div class="field-group">
+                            <label class="field-label" for="email">
+                                <span class="required-dot" title="Required"></span>
+                                Email Address
+                                <span class="rule-badge strict">Strict</span>
+                            </label>
+                            <div class="field-status">
+                                <input type="email" id="email" name="email" class="field-input"
+                                    placeholder="e.g. yash@example.com" aria-describedby="email-msg"
+                                    autocomplete="off" />
+                            </div>
+                            <span id="email-msg" class="field-message" role="alert"></span>
+                        </div>
+
+                        <!-- Phone -->
+                        <div class="field-group">
+                            <label class="field-label" for="phone">
+                                <span class="required-dot" title="Required"></span>
+                                Phone Number
+                                <span class="rule-badge strict">Strict</span>
+                            </label>
+                            <div class="field-status">
+                                <input type="tel" id="phone" name="phone" class="field-input"
+                                    placeholder="10-digit Indian number" maxlength="10" aria-describedby="phone-msg" />
+                            </div>
+                            <span id="phone-msg" class="field-message" role="alert"></span>
+                        </div>
+
+                        <!-- Date of Birth (SOFT) -->
+                        <div class="field-group">
+                            <label class="field-label" for="date_of_birth">
+                                <span class="required-dot" title="Required"></span>
+                                Date of Birth
+                                <span class="rule-badge soft">Soft</span>
+                            </label>
+                            <input type="date" id="date_of_birth" name="date_of_birth" class="field-input"
+                                aria-describedby="date_of_birth-msg" />
+                            <span id="date_of_birth-msg" class="field-message" role="alert"></span>
+
+                            <!-- Exception Panel -->
+                            <div id="date_of_birth-exception" class="exception-panel" hidden>
+                                <div class="exception-toggle-row">
+                                    <label for="date_of_birth-exception-toggle">
+                                        <span class="toggle-switch">
+                                            <input type="checkbox" id="date_of_birth-exception-toggle"
+                                                aria-label="Enable exception for Date of Birth" />
+                                            <span class="toggle-track"></span>
+                                        </span>
+                                        Enable Exception Override for Age
+                                    </label>
+                                </div>
+                                <div id="date_of_birth-rationale-panel" class="exception-rationale" hidden>
+                                    <textarea id="date_of_birth-rationale"
+                                        placeholder='Must include: "approved by", "special case", "documentation pending", or "waiver granted"'
+                                        rows="3" aria-label="Rationale for Date of Birth exception"></textarea>
+                                    <div class="rationale-hint">
+                                        Minimum 30 characters. Must include at least one keyword: <em>approved by,
+                                            special case, documentation pending, waiver granted</em>
+                                    </div>
+                                    <div id="date_of_birth-rationale-counter" class="rationale-counter insufficient">
+                                        0/30 chars minimum</div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- Section 2: Academic Details -->
+                <div class="form-section">
+                    <div class="form-section-title">🎓 Academic Details</div>
+
+                    <div class="form-grid">
+
+                        <!-- Highest Qualification -->
+                        <div class="field-group">
+                            <label class="field-label" for="highest_qualification">
+                                <span class="required-dot" title="Required"></span>
+                                Highest Qualification
+                                <span class="rule-badge strict">Strict</span>
+                            </label>
+                            <select id="highest_qualification" name="highest_qualification" class="field-input"
+                                aria-describedby="highest_qualification-msg">
+                                <option value="">— Select qualification —</option>
+                                <option value="B.Tech">B.Tech</option>
+                                <option value="B.E.">B.E.</option>
+                                <option value="B.Sc">B.Sc</option>
+                                <option value="BCA">BCA</option>
+                                <option value="M.Tech">M.Tech</option>
+                                <option value="M.Sc">M.Sc</option>
+                                <option value="MCA">MCA</option>
+                                <option value="MBA">MBA</option>
+                            </select>
+                            <span id="highest_qualification-msg" class="field-message" role="alert"></span>
+                        </div>
+
+                        <!-- Graduation Year (SOFT) -->
+                        <div class="field-group">
+                            <label class="field-label" for="graduation_year">
+                                <span class="required-dot" title="Required"></span>
+                                Graduation Year
+                                <span class="rule-badge soft">Soft</span>
+                            </label>
+                            <input type="number" id="graduation_year" name="graduation_year" class="field-input"
+                                placeholder="e.g. 2022" min="2000" max="2030" aria-describedby="graduation_year-msg" />
+                            <span id="graduation_year-msg" class="field-message" role="alert"></span>
+
+                            <!-- Exception Panel -->
+                            <div id="graduation_year-exception" class="exception-panel" hidden>
+                                <div class="exception-toggle-row">
+                                    <label for="graduation_year-exception-toggle">
+                                        <span class="toggle-switch">
+                                            <input type="checkbox" id="graduation_year-exception-toggle"
+                                                aria-label="Enable exception for Graduation Year" />
+                                            <span class="toggle-track"></span>
+                                        </span>
+                                        Enable Exception Override for Graduation Year
+                                    </label>
+                                </div>
+                                <div id="graduation_year-rationale-panel" class="exception-rationale" hidden>
+                                    <textarea id="graduation_year-rationale"
+                                        placeholder='Must include: "approved by", "special case", "documentation pending", or "waiver granted"'
+                                        rows="3" aria-label="Rationale for Graduation Year exception"></textarea>
+                                    <div class="rationale-hint">
+                                        Minimum 30 characters. Must include a required keyword.
+                                    </div>
+                                    <div id="graduation_year-rationale-counter" class="rationale-counter insufficient">
+                                        0/30 chars minimum</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Percentage / CGPA (SOFT) -->
+                        <div class="field-group">
+                            <label class="field-label" for="percentage_cgpa">
+                                <span class="required-dot" title="Required"></span>
+                                <span id="score-label">Percentage (%)</span>
+                                <span class="rule-badge soft">Soft</span>
+                            </label>
+                            <!-- Score type toggle -->
+                            <div class="score-type-toggle" role="group" aria-label="Score type">
+                                <button type="button" id="score-type-percentage" class="score-type-btn active">%
+                                    Percentage</button>
+                                <button type="button" id="score-type-cgpa" class="score-type-btn">📐 CGPA</button>
+                            </div>
+                            <input type="number" id="percentage_cgpa" name="percentage_cgpa" class="field-input"
+                                placeholder="e.g. 72.5" step="0.01"
+                                aria-describedby="percentage_cgpa-msg percentage_cgpa-hint" />
+                            <span id="percentage_cgpa-hint" class="field-message" style="color:var(--text-muted)">
+                                <span id="score-hint">Minimum 60%</span>
+                            </span>
+                            <span id="percentage_cgpa-msg" class="field-message" role="alert"></span>
+
+                            <!-- Exception Panel -->
+                            <div id="percentage_cgpa-exception" class="exception-panel" hidden>
+                                <div class="exception-toggle-row">
+                                    <label for="percentage_cgpa-exception-toggle">
+                                        <span class="toggle-switch">
+                                            <input type="checkbox" id="percentage_cgpa-exception-toggle"
+                                                aria-label="Enable exception for Percentage/CGPA" />
+                                            <span class="toggle-track"></span>
+                                        </span>
+                                        Enable Exception Override for Grade
+                                    </label>
+                                </div>
+                                <div id="percentage_cgpa-rationale-panel" class="exception-rationale" hidden>
+                                    <textarea id="percentage_cgpa-rationale"
+                                        placeholder='Must include: "approved by", "special case", "documentation pending", or "waiver granted"'
+                                        rows="3" aria-label="Rationale for Percentage/CGPA exception"></textarea>
+                                    <div class="rationale-hint">Minimum 30 characters. Must include a required keyword.
+                                    </div>
+                                    <div id="percentage_cgpa-rationale-counter" class="rationale-counter insufficient">
+                                        0/30 chars minimum</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Screening Test Score (SOFT) -->
+                        <div class="field-group">
+                            <label class="field-label" for="screening_test_score">
+                                <span class="required-dot" title="Required"></span>
+                                Screening Test Score
+                                <span class="rule-badge soft">Soft</span>
+                            </label>
+                            <input type="number" id="screening_test_score" name="screening_test_score"
+                                class="field-input" placeholder="Score out of 100" min="0" max="100"
+                                aria-describedby="screening_test_score-msg" />
+                            <span id="screening_test_score-msg" class="field-message" role="alert"></span>
+
+                            <!-- Exception Panel -->
+                            <div id="screening_test_score-exception" class="exception-panel" hidden>
+                                <div class="exception-toggle-row">
+                                    <label for="screening_test_score-exception-toggle">
+                                        <span class="toggle-switch">
+                                            <input type="checkbox" id="screening_test_score-exception-toggle"
+                                                aria-label="Enable exception for Screening Test Score" />
+                                            <span class="toggle-track"></span>
+                                        </span>
+                                        Enable Exception Override for Screening Score
+                                    </label>
+                                </div>
+                                <div id="screening_test_score-rationale-panel" class="exception-rationale" hidden>
+                                    <textarea id="screening_test_score-rationale"
+                                        placeholder='Must include: "approved by", "special case", "documentation pending", or "waiver granted"'
+                                        rows="3" aria-label="Rationale for Screening Test Score exception"></textarea>
+                                    <div class="rationale-hint">Minimum 30 characters. Must include a required keyword.
+                                    </div>
+                                    <div id="screening_test_score-rationale-counter"
+                                        class="rationale-counter insufficient">0/30 chars minimum</div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- Section 3: Admission Process -->
+                <div class="form-section">
+                    <div class="form-section-title">📌 Admission Process</div>
+
+                    <div class="form-grid">
+
+                        <!-- Interview Status -->
+                        <div class="field-group">
+                            <label class="field-label" for="interview_status">
+                                <span class="required-dot" title="Required"></span>
+                                Interview Status
+                                <span class="rule-badge strict">Strict</span>
+                            </label>
+                            <select id="interview_status" name="interview_status" class="field-input"
+                                aria-describedby="interview_status-msg">
+                                <option value="">— Select status —</option>
+                                <option value="Cleared">✅ Cleared</option>
+                                <option value="Waitlisted">⏳ Waitlisted</option>
+                                <option value="Rejected">❌ Rejected</option>
+                            </select>
+                            <span id="interview_status-msg" class="field-message" role="alert"></span>
+                        </div>
+
+                        <!-- Offer Letter Sent -->
+                        <div class="field-group">
+                            <label class="field-label" for="offer_letter_sent">
+                                <span class="required-dot" title="Required"></span>
+                                Offer Letter Sent
+                                <span class="rule-badge strict">Strict</span>
+                            </label>
+                            <select id="offer_letter_sent" name="offer_letter_sent" class="field-input"
+                                aria-describedby="offer_letter_sent-msg">
+                                <option value="">— Select —</option>
+                                <option value="Yes">Yes</option>
+                                <option value="No">No</option>
+                            </select>
+                            <span id="offer_letter_sent-msg" class="field-message" role="alert"></span>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- Section 4: Identity Verification -->
+                <div class="form-section">
+                    <div class="form-section-title">🪪 Identity Verification</div>
+
+                    <div class="form-grid single">
+
+                        <!-- Aadhaar Number -->
+                        <div class="field-group">
+                            <label class="field-label" for="aadhaar">
+                                <span class="required-dot" title="Required"></span>
+                                Aadhaar Number
+                                <span class="rule-badge strict">Strict</span>
+                            </label>
+                            <input type="text" id="aadhaar" name="aadhaar" class="field-input"
+                                placeholder="12-digit Aadhaar number" maxlength="12" inputmode="numeric"
+                                aria-describedby="aadhaar-msg" />
+                            <span id="aadhaar-msg" class="field-message" role="alert"></span>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- Form Actions -->
+                <div class="form-actions">
+                    <button type="submit" id="submit-btn" class="btn btn-primary">
+                        🚀 Submit Candidate
+                    </button>
+                    <button type="button" id="reset-btn" class="btn btn-secondary">
+                        ↺ Clear Form
+                    </button>
+                    <span style="flex:1"></span>
+                    <span style="font-size:0.75rem;color:var(--text-muted)">
+                        <span class="required-dot" style="display:inline-block;margin-right:4px"></span>
+                        Required fields
+                    </span>
+                </div>
+
+            </form>
+        </div><!-- /tab-form -->
+
+        <!-- =====================================================================
+         Tab 2: Audit Log
+         ===================================================================== -->
+        <div id="tab-audit" class="tab-panel" role="tabpanel" aria-labelledby="nav-audit">
+
+            <div class="card">
+                <div class="audit-toolbar">
+                    <div style="display:flex;align-items:center;gap:var(--gap-md);flex-wrap:wrap">
+                        <h2 class="card-title" style="margin-bottom:0">📜 Audit Log</h2>
+                        <span id="audit-count"
+                            style="font-size:0.78rem;color:var(--text-muted);background:var(--bg-input);padding:2px 10px;border-radius:var(--radius-full)">0
+                            entries</span>
+                    </div>
+                    <div class="audit-filter" role="group" aria-label="Filter audit log">
+                        <button class="filter-btn active" data-filter="all">All</button>
+                        <button class="filter-btn" data-filter="exceptions">⚠️ Exceptions</button>
+                        <button class="filter-btn" data-filter="flagged">🚨 Flagged</button>
+                        <button class="btn btn-secondary btn-sm" onclick="loadAuditLog()"
+                            aria-label="Refresh">↻</button>
+                    </div>
+                </div>
+
+                <!-- Search bar -->
+                <div style="margin-bottom:var(--gap-md)">
+                    <input type="search" id="audit-search" class="field-input" placeholder="🔍 Search by name or email…"
+                        style="max-width:340px" aria-label="Search audit log" />
+                </div>
+
+                <!-- Export bar -->
+                <div class="export-bar">
+                    <span style="font-size:0.8rem;color:var(--text-muted);font-weight:500">📤 Export data:</span>
+                    <a id="export-csv-btn" href="/api/export/csv" download class="btn btn-secondary btn-sm">⬇ CSV</a>
+                    <a id="export-json-btn" href="/api/export/json" download class="btn btn-secondary btn-sm">⬇ JSON</a>
+                </div>
+
+                <div class="audit-table-wrapper">
+                    <table class="audit-table" aria-label="Audit log entries">
+                        <colgroup>
+                            <col style="min-width:140px">
+                            <col style="min-width:180px">
+                            <col style="min-width:100px">
+                            <col style="min-width:180px">
+                            <col style="min-width:90px">
+                            <col style="min-width:140px">
+                            <col style="min-width:80px">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th scope="col">Candidate</th>
+                                <th scope="col">Email</th>
+                                <th scope="col">Action</th>
+                                <th scope="col">Exceptions</th>
+                                <th scope="col">Review Flag</th>
+                                <th scope="col">Timestamp</th>
+                                <th scope="col">ID</th>
+                            </tr>
+                        </thead>
+                        <tbody id="audit-tbody">
+                            <tr>
+                                <td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)">
+                                    Switch to this tab to load audit data
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="audit-empty" class="empty-state" hidden>
+                    <div class="empty-icon">📭</div>
+                    <p>No submissions match the selected filter.</p>
+                </div>
+            </div>
+
+        </div><!-- /tab-audit -->
+
+        <!-- =====================================================================
+         Tab 3: Dashboard
+         ===================================================================== -->
+        <div id="tab-dashboard" class="tab-panel" role="tabpanel" aria-labelledby="nav-dashboard">
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">👥</div>
+                    <div class="stat-value" id="stat-total">—</div>
+                    <div class="stat-label">Total Submissions</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🚨</div>
+                    <div class="stat-value" id="stat-flagged">—</div>
+                    <div class="stat-label">Flagged for Review</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⚠️</div>
+                    <div class="stat-value" id="stat-rate">—</div>
+                    <div class="stat-label">Exception Rate</div>
+                </div>
+                <div class="stat-card" style="cursor:pointer" onclick="window.location.href='/api/export/csv'">
+                    <div class="stat-icon">📥</div>
+                    <div class="stat-value" style="font-size:1.4rem">CSV</div>
+                    <div class="stat-label">Download Export</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">📋 Rules Configuration</div>
+            <table class="audit-table" aria-label="Eligibility rules reference">
+                <thead>
+                    <tr>
+                        <th scope="col">Field</th>
+                        <th scope="col">Rule</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Exception?</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Full Name</td>
+                        <td>Required, min 2 chars, no numbers</td>
+                        <td><span class="badge badge-error">Strict</span></td>
+                        <td>No</td>
+                    </tr>
+                    <tr>
+                        <td>Email</td>
+                        <td>Valid format, must be unique</td>
+                        <td><span class="badge badge-error">Strict</span></td>
+                        <td>No</td>
+                    </tr>
+                    <tr>
+                        <td>Phone</td>
+                        <td>10-digit, starts with 6/7/8/9</td>
+                        <td><span class="badge badge-error">Strict</span></td>
+                        <td>No</td>
+                    </tr>
+                    <tr>
+                        <td>Date of Birth</td>
+                        <td>Age 18–35</td>
+                        <td><span class="badge badge-warning">Soft</span></td>
+                        <td>Yes — rationale required</td>
+                    </tr>
+                    <tr>
+                        <td>Qualification</td>
+                        <td>B.Tech / B.E. / B.Sc / BCA / M.Tech / M.Sc / MCA / MBA</td>
+                        <td><span class="badge badge-error">Strict</span></td>
+                        <td>No</td>
+                    </tr>
+                    <tr>
+                        <td>Graduation Year</td>
+                        <td>2015–2025</td>
+                        <td><span class="badge badge-warning">Soft</span></td>
+                        <td>Yes — rationale required</td>
+                    </tr>
+                    <tr>
+                        <td>Percentage / CGPA</td>
+                        <td>≥ 60% or ≥ 6.0 CGPA</td>
+                        <td><span class="badge badge-warning">Soft</span></td>
+                        <td>Yes — rationale required</td>
+                    </tr>
+                    <tr>
+                        <td>Screening Score</td>
+                        <td>≥ 40 / 100</td>
+                        <td><span class="badge badge-warning">Soft</span></td>
+                        <td>Yes — rationale required</td>
+                    </tr>
+                    <tr>
+                        <td>Interview Status</td>
+                        <td>Cleared / Waitlisted / Rejected (Rejected blocks)</td>
+                        <td><span class="badge badge-error">Strict</span></td>
+                        <td>No</td>
+                    </tr>
+                    <tr>
+                        <td>Aadhaar Number</td>
+                        <td>Exactly 12 digits</td>
+                        <td><span class="badge badge-error">Strict</span></td>
+                        <td>No</td>
+                    </tr>
+                    <tr>
+                        <td>Offer Letter Sent</td>
+                        <td>Yes only if interview Cleared/Waitlisted</td>
+                        <td><span class="badge badge-error">Strict</span></td>
+                        <td>No</td>
+                    </tr>
+                    <tr>
+                        <td>Exception Count</td>
+                        <td>&gt; 2 exceptions → flagged for manager review</td>
+                        <td><span class="badge badge-info">System</span></td>
+                        <td>N/A</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div style="margin-top:var(--gap-md);display:flex;justify-content:flex-end">
+                <button class="btn btn-secondary btn-sm" onclick="loadDashboard()">↻ Refresh Stats</button>
+            </div>
+        </div>
+
+    </div><!-- /tab-dashboard -->
+
+    </div><!-- /app-wrapper -->
+
+    <script src="app.js"></script>
+</body>
+
+</html>
