@@ -1132,29 +1132,83 @@ select.field-input option {
 }
 
 /* --------------------------------------------------------------------------
-   Responsive
+   Responsive — Tablet (≤ 900px)
+   -------------------------------------------------------------------------- */
+@media (max-width: 900px) {
+    .app-wrapper {
+        padding: var(--gap-lg) var(--gap-md);
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .audit-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--gap-sm);
+    }
+
+    .export-bar {
+        flex-wrap: wrap;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   Responsive — Mobile (≤ 640px)
    -------------------------------------------------------------------------- */
 @media (max-width: 640px) {
     .app-wrapper {
-        padding: var(--gap-md);
+        padding: var(--gap-sm);
     }
 
     .app-header {
         flex-direction: column;
         gap: var(--gap-md);
         align-items: flex-start;
+        padding: var(--gap-md) 0 var(--gap-lg);
+    }
+
+    .brand h1 {
+        font-size: 1.1rem;
+    }
+
+    .brand-icon {
+        width: 36px;
+        height: 36px;
+        font-size: 18px;
+    }
+
+    .header-actions {
+        width: 100%;
+        justify-content: flex-end;
     }
 
     .nav-tabs {
         flex-direction: column;
+        border-radius: var(--radius-md);
     }
 
     .nav-tab {
         justify-content: flex-start;
+        padding: 10px var(--gap-md);
     }
 
     .stats-grid {
         grid-template-columns: 1fr 1fr;
+        gap: var(--gap-sm);
+    }
+
+    .stat-card {
+        padding: var(--gap-md);
+    }
+
+    .stat-value {
+        font-size: 1.6rem;
+    }
+
+    .stat-label {
+        font-size: 0.7rem;
     }
 
     .form-grid {
@@ -1169,11 +1223,40 @@ select.field-input option {
         width: 100%;
     }
 
+    .card {
+        padding: var(--gap-md);
+        border-radius: var(--radius-md);
+    }
+
     .modal {
         padding: var(--gap-lg);
+        margin: var(--gap-sm);
+        max-height: 85vh;
+    }
+
+    .modal-overlay {
+        padding: var(--gap-sm);
+    }
+
+    .modal-actions {
+        flex-direction: column;
+        gap: var(--gap-sm);
+    }
+
+    .modal-actions .btn {
+        width: 100%;
+    }
+
+    .audit-table-wrapper {
+        border-radius: var(--radius-sm);
     }
 
     .audit-filter {
         flex-wrap: wrap;
+    }
+
+    .summary-row {
+        flex-direction: column;
+        gap: 2px;
     }
 }

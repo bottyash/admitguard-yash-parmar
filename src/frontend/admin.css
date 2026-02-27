@@ -279,16 +279,45 @@
 }
 
 /* --------------------------------------------------------------------------
-   Responsive
+   Responsive — Tablet (≤ 900px)
+   -------------------------------------------------------------------------- */
+@media (max-width: 900px) {
+    .admin-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .admin-toolbar-right {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+
+    .admin-toolbar-right input {
+        flex: 1;
+        min-width: 160px;
+        max-width: 100% !important;
+    }
+
+    .admin-table {
+        font-size: 0.75rem;
+    }
+
+    .admin-actions button {
+        padding: 4px 8px;
+        font-size: 0.68rem;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   Responsive — Mobile (≤ 640px)
    -------------------------------------------------------------------------- */
 @media (max-width: 640px) {
     .login-card {
         padding: var(--gap-xl) var(--gap-lg);
     }
 
-    .admin-toolbar {
-        flex-direction: column;
-        align-items: stretch;
+    .login-header h1 {
+        font-size: 1.4rem;
     }
 
     .admin-toolbar-right {
@@ -299,7 +328,24 @@
         max-width: 100% !important;
     }
 
+    .edit-modal {
+        margin: var(--gap-sm);
+    }
+
     .edit-grid {
         grid-template-columns: 1fr;
+    }
+
+    .delete-modal {
+        margin: var(--gap-sm);
+    }
+
+    .admin-actions {
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .admin-actions button {
+        width: 100%;
     }
 }
