@@ -106,10 +106,60 @@ Soft rule fails → Frontend shows exception toggle
 
 ---
 
-## Sprint 3 — Frontend + Audit Trail
-**Status:** Pending
+## Sprint 3 — Frontend + Audit Trail ✅
+**Date:** 2026-02-27 | **Commit:** `4c8d23e` | **Tag:** Frontend + Audit Trail
+
+### Goal
+Build a modern, API-driven single-page application (SPA) with no client-side validation, fully integrated with the AdmitGuard backend.
+
+### What Was Built
+- **3-Tab Glassmorphism UI** (`index.html`, `styles.css`):
+  - **Candidate Entry**: Full form (11 fields) with real-time blur validation.
+  - **Audit Log**: Live-loading activity feed with status badges.
+  - **Dashboard**: High-level stats + embedded rules configuration table.
+- **Frontend Logic** (`app.js`):
+  - Zero client-side validation — every field `blur` calls the backend.
+  - Dynamic exception panels — show/hide rationale textarea based on backend warnings.
+  - Unified theme engine — dark mode by default with light/dark toggle.
+  - Activity-dependent loading (fetch audit/stats only when switching to their tabs).
+- **Embedded Rules Reference**: The configuration flags from `rules_config.py` are visually summarized for recruiters on every page.
 
 ---
 
-## Sprint 4 — Polish, Export & Presentation
-**Status:** Pending
+## Sprint 3+ — Persistent Storage (SQLite) ✅
+**Date:** 2026-02-27 | **Commit:** `fc36e1c` | **Tag:** SQLite Database
+
+### Goal
+Replace volatile in-memory storage with a persistent SQLite database without breaking existing API contracts.
+
+### What Was Built
+- **Database Module** (`db.py`):
+  - SQLite schema for `candidates` and `audit_log` tables.
+  - WAL mode enabled for high-performance concurrency.
+- **SQLite Candidate Model** (`models/candidate.py`):
+  - Function signatures preserved exactly — routes remain unchanged.
+  - Handles JSON serialization for the `exceptions` list field.
+  - Boolean mapping (SQLite 0/1 to Python True/False).
+
+---
+
+## Sprint 4 — Polish, Export & Presentation ✅
+**Date:** 2026-02-27 | **Commit:** `6496a1b` | **Tag:** Sprint 4-Final
+
+### Goal
+Add data portability (export), enhance usability (search/shortcuts), and finalize documentation.
+
+### What Was Built
+- **Export Functionality**:
+  - `GET /api/export/csv` — formatted CSV download with quoted headers.
+  - `GET /api/export/json` — JSON file download of the candidate database.
+  - UI buttons Added to Audit Log and Dashboard tabs.
+- **Enhanced Search**:
+  - Live search input in Audit Log — filters by name or email instantly.
+  - Entry count badge updates dynamically based on filtered results.
+- **Keyboard Shortcuts**:
+  - `Ctrl + Enter` triggers form submission globally.
+- **Documentation**:
+  - **README.md**: Comprehensive manual including runner guide, API reference, and rule lookup.
+  - **R.I.C.E. Prompts**: Fully documented 12-file prompt log in `prompts/`.
+  - **Audit Polish**: Custom scrollbars and refined responsive layouts.

@@ -419,6 +419,7 @@ body::before {
     transition: all var(--transition);
     outline: none;
     -webkit-appearance: none;
+    appearance: none;
 }
 
 .field-input::placeholder {
