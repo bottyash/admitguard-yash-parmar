@@ -1,24 +1,30 @@
 """
 AdmitGuard — Flask Application Entry Point
-Sprint 2: Strict + Soft Rules with Exception System
+Sprint 3: Strict + Soft Rules + Frontend Serving
 
 Run with: python app.py
-Server starts at http://localhost:5000
+  API + Frontend at: http://localhost:5000
 """
 
-from flask import Flask, jsonify
+import os
+from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from routes.candidates import candidates_bp
+
+# Resolve path to frontend directory (../frontend relative to backend/)
+FRONTEND_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "frontend")
+)
 
 
 def create_app():
     """Create and configure the Flask application."""
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
-    # Enable CORS for frontend access
+    # Enable CORS for all API routes
     CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-    # Register blueprints
+    # Register API blueprints
     app.register_blueprint(candidates_bp)
 
     # Health check endpoint
@@ -26,10 +32,18 @@ def create_app():
     def health_check():
         return jsonify({
             "status": "healthy",
-            "version": "2.0.0",
-            "sprint": 2,
+            "version": "3.0.0",
+            "sprint": 3,
             "description": "AdmitGuard — Admission Data Validation API"
         }), 200
+
+    # Serve frontend (index.html at root and any static assets)
+    @app.route("/", defaults={"path": ""})
+    @app.route("/<path:path>")
+    def serve_frontend(path):
+        if path and os.path.exists(os.path.join(FRONTEND_DIR, path)):
+            return send_from_directory(FRONTEND_DIR, path)
+        return send_from_directory(FRONTEND_DIR, "index.html")
 
     return app
 
@@ -37,14 +51,14 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     print("=" * 60)
-    print("  AdmitGuard API — Sprint 2")
-    print("  Server running at http://localhost:5000")
+    print("  AdmitGuard — Sprint 3")
+    print("  Frontend + API at: http://localhost:5000")
     print("  Endpoints:")
-    print("    POST /api/validate          — Validate all fields (strict + soft)")
+    print("    GET  /                       — Frontend UI")
+    print("    POST /api/validate           — Validate all fields")
     print("    POST /api/validate/<field>   — Validate single field")
     print("    POST /api/candidates         — Submit candidate")
     print("    GET  /api/candidates         — List all candidates")
-    print("    GET  /api/candidates/<id>    — Get candidate by ID")
     print("    GET  /api/audit-log          — Audit log")
     print("    GET  /api/dashboard          — Dashboard stats")
     print("    GET  /api/health             — Health check")
