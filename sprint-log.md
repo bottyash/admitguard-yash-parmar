@@ -166,7 +166,7 @@ Add data portability (export), enhance usability (search/shortcuts), and finaliz
 
 ---
 
-## Sprint 5 — Admin Panel (प्रबंधक) ✅
+## Sprint 5 — Admin Panel (KartaDharta) ✅
 **Date:** 2026-02-27 | **Tag:** Admin Panel
 
 ### Goal

@@ -157,7 +157,7 @@ RULE_MAX_EXCEPTIONS_BEFORE_FLAG = 3   # Allow more exceptions before flagging
 | 3 | Frontend + audit log UI | ✅ |
 | 3+ | SQLite database | ✅ |
 | 4 | Export + polish + README | ✅ |
-| 5 | Admin panel (प्रबंधक) | ✅ |
+| 5 | Admin panel (KartaDharta) | ✅ |
 
 ---
 
