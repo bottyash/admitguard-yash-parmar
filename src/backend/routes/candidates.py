@@ -3,7 +3,8 @@ AdmitGuard — Candidate API Routes
 Sprint 2: Validate (strict + soft), exception handling, create, list, audit log.
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
+import csv, io, json as _json
 
 import sys
 import os
@@ -337,3 +338,56 @@ def dashboard():
         "flagged_count": get_flagged_count(),
         "exception_rate": get_exception_rate(),
     }), 200
+
+
+@candidates_bp.route("/api/export/csv", methods=["GET"])
+def export_csv():
+    """
+    Export all candidates as a downloadable CSV file.
+    Response: text/csv attachment
+    """
+    candidates = get_all_candidates()
+
+    fields = [
+        "id", "full_name", "email", "phone", "date_of_birth",
+        "highest_qualification", "graduation_year", "percentage_cgpa",
+        "score_type", "screening_test_score", "interview_status",
+        "aadhaar", "offer_letter_sent", "exception_count",
+        "flagged_for_review", "submitted_at",
+    ]
+
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=fields,
+        extrasaction="ignore",
+        quoting=csv.QUOTE_ALL,
+    )
+    writer.writeheader()
+    for c in candidates:
+        row = {f: c.get(f, "") for f in fields}
+        # Flatten booleans for CSV readability
+        row["flagged_for_review"] = "Yes" if c.get("flagged_for_review") else "No"
+        writer.writerow(row)
+
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=admitguard_export.csv"},
+    )
+
+
+@candidates_bp.route("/api/export/json", methods=["GET"])
+def export_json():
+    """
+    Export all candidates as a downloadable JSON file.
+    Response: application/json attachment
+    """
+    candidates = get_all_candidates()
+    payload = _json.dumps(candidates, indent=2, ensure_ascii=False)
+    return Response(
+        payload,
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=admitguard_export.json"},
+    )
