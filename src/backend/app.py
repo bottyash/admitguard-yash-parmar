@@ -1,6 +1,6 @@
 """
 AdmitGuard — Flask Application Entry Point
-Sprint 3: Strict + Soft Rules + Frontend Serving
+Sprint 3+: Strict + Soft Rules + Frontend + SQLite Database
 
 Run with: python app.py
   API + Frontend at: http://localhost:5000
@@ -10,6 +10,7 @@ import os
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from routes.candidates import candidates_bp
+from db import init_db
 
 # Resolve path to frontend directory (../frontend relative to backend/)
 FRONTEND_DIR = os.path.abspath(
@@ -20,6 +21,9 @@ FRONTEND_DIR = os.path.abspath(
 def create_app():
     """Create and configure the Flask application."""
     app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
+
+    # Initialize SQLite database (creates tables on first run)
+    init_db()
 
     # Enable CORS for all API routes
     CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -32,8 +36,9 @@ def create_app():
     def health_check():
         return jsonify({
             "status": "healthy",
-            "version": "3.0.0",
-            "sprint": 3,
+            "version": "3.1.0",
+            "sprint": "3+",
+            "storage": "SQLite",
             "description": "AdmitGuard — Admission Data Validation API"
         }), 200
 
