@@ -459,8 +459,9 @@ select.field-input {
 
 /* Dropdown option styling — browsers ignore CSS vars, need explicit colors */
 select.field-input option {
-    background: #0f0f1a;
-    color: #f1f5f9;
+    background: #1e1e2e;
+    color: #ffffff;
+    padding: 8px;
 }
 
 [data-theme="light"] select.field-input option {
