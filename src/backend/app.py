@@ -54,6 +54,17 @@ def create_app():
 
 
 if __name__ == "__main__":
+    import signal
+    import sys
+
+    def handle_exit(sig, frame):
+        """Ensure the server exits cleanly with no background processes."""
+        print("\n  Shutting down AdmitGuard server...")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
+
     app = create_app()
     print("=" * 60)
     print("  AdmitGuard — Sprint 3")
@@ -67,5 +78,6 @@ if __name__ == "__main__":
     print("    GET  /api/audit-log          — Audit log")
     print("    GET  /api/dashboard          — Dashboard stats")
     print("    GET  /api/health             — Health check")
+    print("  Press Ctrl+C to stop the server cleanly.")
     print("=" * 60)
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, use_reloader=False)
