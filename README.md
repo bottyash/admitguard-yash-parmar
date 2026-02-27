@@ -146,4 +146,4 @@ RULE_MAX_EXCEPTIONS_BEFORE_FLAG = 3   # Allow more exceptions before flagging
 
 ---
 
-*Built at IIT Gandhinagar, February 2026*
+*Built at IIT Gandhinagar, while sipping TEA*
