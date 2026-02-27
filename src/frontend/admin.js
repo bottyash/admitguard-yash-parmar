@@ -3,7 +3,7 @@
  * Handles login, candidate management, editing, and deletion.
  */
 
-const API = "http://localhost:5000";
+const API = "";  // Relative URLs — always matches the page origin
 
 // =============================================================================
 // DOM Helpers

@@ -457,6 +457,17 @@ select.field-input {
     appearance: none;
 }
 
+/* Dropdown option styling — browsers ignore CSS vars, need explicit colors */
+select.field-input option {
+    background: #0f0f1a;
+    color: #f1f5f9;
+}
+
+[data-theme="light"] select.field-input option {
+    background: #ffffff;
+    color: #0f172a;
+}
+
 /* Score type radio toggle */
 .score-type-toggle {
     display: flex;
