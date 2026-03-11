@@ -1,12 +1,17 @@
 """
-AdmitGuard — Flask Application Entry Point
-Sprint 3+: Strict + Soft Rules + Frontend + SQLite Database
+AdmitGuard v2 — Flask Application Entry Point
+Enterprise-grade admission validation platform.
 
 Run with: python app.py
   API + Frontend at: http://localhost:5000
 """
 
 import os
+from dotenv import load_dotenv
+
+# Load .env BEFORE any other imports that might need env vars
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env'))
+
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from routes.candidates import candidates_bp
@@ -24,7 +29,7 @@ def create_app():
     app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
     # Secret key for session support (admin login)
-    app.secret_key = "admitguard-secret-key-change-in-production"
+    app.secret_key = os.getenv("SECRET_KEY", "admitguard-v2-dev-secret-key")
 
     # Initialize SQLite database (creates tables on first run)
     init_db()
@@ -41,10 +46,10 @@ def create_app():
     def health_check():
         return jsonify({
             "status": "healthy",
-            "version": "3.1.0",
-            "sprint": "3+",
+            "version": "2.0.0",
+            "sprint": "v2",
             "storage": "SQLite",
-            "description": "AdmitGuard — Admission Data Validation API"
+            "description": "AdmitGuard v2: Enterprise Admission Validation Platform"
         }), 200
 
     # Serve admin panel

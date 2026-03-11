@@ -18,7 +18,8 @@ env/
 
 # Environment
 .env
-.env.*
+!.env.example
+credentials.json
 
 # IDE
 .vscode/

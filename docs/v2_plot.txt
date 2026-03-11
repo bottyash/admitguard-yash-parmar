@@ -1,0 +1,317 @@
+AdmitGuard v2 — Sprint Improvement Brief
+Project Code: AG-SPRINT-01
+Issued by: Program Engineering Lead
+Issued to: All Trainee Engineers (Cohort 1)
+Sprint Window: 7 calendar days from issue date
+Priority: P1 — Blocks downstream intake operations
+
+Context
+The AdmitGuard prototype you shipped in Week 1 (discussion #3) proved one thing: you can build fast with AI-assisted coding. Good.
+
+It also proved you can ship something that would get rejected in a client demo within 5 minutes. Here's the client feedback (verbatim):
+
+"The form captures degrees but ignores work experience entirely. It doesn't understand that Indian students can take the Diploma route instead of 10+2. There's no backend validation — I can submit garbage data and it accepts it. There's no intelligence layer. This is a Google Form with extra steps. We need an enterprise-grade admission validation platform, not a UI mockup."
+
+This sprint is your chance to fix it. You have 7 days. The deliverable is a production-deployable admission validation platform with an intelligence layer — not a prettier version of what you already have.
+
+System Overview: What AdmitGuard v2 Must Be
+┌─────────────────────────────────────────────────────────────┐
+│                    AdmitGuard v2 Architecture                │
+│                                                             │
+│  ┌──────────┐    ┌──────────────┐    ┌──────────────────┐   │
+│  │ Frontend  │───▶│  Validation  │───▶│  Intelligence    │   │
+│  │ (Input)   │    │  Engine      │    │  Layer           │   │
+│  │           │    │  (Backend)   │    │  (Analytics/ML)  │   │
+│  └──────────┘    └──────┬───────┘    └────────┬─────────┘   │
+│                         │                     │             │
+│                         ▼                     ▼             │
+│               ┌──────────────────────────────────┐          │
+│               │  Persistent Storage & Reporting   │          │
+│               │  (Google Sheets / Drive / Excel)  │          │
+│               └──────────────────────────────────┘          │
+└─────────────────────────────────────────────────────────────┘
+This is not a form-building project. This is a data platform with four layers:
+
+Layer	What It Does	What It's NOT
+Input Layer	Captures applicant data with contextual UI (education path adapts to selections)	A static HTML form
+Validation Engine	Server-side rules that reject invalid data before it enters the system	Client-side required attributes
+Intelligence Layer	ML/analytics that scores, flags, or categorizes applicants	A dashboard with charts
+Reporting Layer	Auto-syncs validated data to a shared Google Sheet + generates downloadable reports	Manual data entry
+Functional Requirements
+FR-1: Education Path Handling (Indian System)
+The current version only captures degree information. Indian education has multiple valid pathways. Your system must handle all of them.
+
+Indian Education Pathways (Simplified)
+
+Path A (Standard):          Path B (Diploma):         Path C (Lateral):
+  10th (SSC/ICSE/CBSE)       10th                      10th
+       │                        │                        │
+      12th (HSC/ISC/CBSE)    Diploma (3yr)              ITI / Vocational
+       │                        │                        │
+    UG Degree                UG Degree                 Diploma
+       │                    (Lateral Entry)               │
+    PG / Work                   │                     UG Degree
+                            PG / Work                    │
+                                                      PG / Work
+What to capture per education entry:
+
+Field	Type	Validation Rule
+Level	Dropdown	10th, 12th, Diploma, ITI, UG, PG, PhD
+Board/University	Text	Required. Auto-suggest from known Indian boards/universities if possible
+Stream/Specialization	Text	Required for 12th+. E.g., Science, Commerce, Arts, CSE, ECE
+Year of Passing	Number	Must be ≤ current year. Must follow chronological order (12th year > 10th year)
+Score	Number	Percentage or CGPA — system must ask which scale and normalize internally
+Score Scale	Dropdown	Percentage / CGPA (out of 10) / CGPA (out of 4) / Grade
+Backlog Count	Number	0+ for UG/PG. Hidden for 10th/12th
+Gap After This Level	Number (months)	0+. Captures career gaps between education levels
+Validation rules that MUST be enforced server-side:
+
+10th is mandatory for all paths
+If Path A → 12th is mandatory before UG
+If Path B → Diploma is mandatory; 12th is optional
+Year of passing must be chronologically increasing across levels
+Score normalization: if CGPA out of 10, internally convert to percentage (×9.5 approximation or institution-specific if known). If CGPA out of 4, use standard conversion table.
+Total education gap > 24 months → flag for review (not reject — flag)
+Backlog > 0 at any level → flag for review
+FR-2: Work Experience Module
+Not captured at all in v1. This is a critical gap — most programs consider work experience in admissions.
+
+Capture per work entry:
+
+Field	Type	Validation
+Company Name	Text	Required
+Designation	Text	Required
+Domain/Industry	Dropdown	IT, Non-IT, Government, Startup, Freelance, Other
+Start Date	Date	Must be after last education end date (or concurrent if part-time)
+End Date	Date / "Present"	If present, calculate tenure dynamically
+Employment Type	Dropdown	Full-time, Part-time, Internship, Contract, Freelance
+Key Skills Used	Multi-select or Tags	Free text with tag-style input
+Derived fields (auto-calculated, not entered by user):
+
+Total work experience (months) — sum of all tenures, handle overlaps
+Domain-relevant experience (months) — filter by IT/relevant domains
+Career gap between jobs (months) — flag if > 6 months
+Current employment status (Employed / Notice Period / Unemployed)
+FR-3: Validation Engine (Backend — This Is Where v1 Failed)
+Your validation must happen server-side. Client-side validation is a UX convenience. Server-side validation is a data integrity requirement. These are different things.
+
+Validation tiers:
+
+Tier 1: HARD REJECT (data cannot be saved)
+├── Missing mandatory fields (name, email, phone, 10th details)
+├── Duplicate application (same email or phone already exists)
+├── Chronologically impossible dates (graduated before enrolling)
+├── Age < 18 at time of application
+└── Score values outside valid range (e.g., percentage > 100)
+
+Tier 2: SOFT FLAG (data saved, but flagged for manual review)
+├── Education gap > 24 months
+├── Active backlogs > 0
+├── Work experience < 0 months (arithmetic error in dates)
+├── Score below program-defined threshold
+├── More than 3 career transitions across unrelated domains
+└── No work experience but > 3 years since last education
+
+Tier 3: ENRICHMENT (auto-computed metadata attached to record)
+├── Applicant risk score (see Intelligence Layer)
+├── Normalized scores across all education levels
+├── Total experience bucket: Fresher / Junior (0-2yr) / Mid (2-5yr) / Senior (5+yr)
+└── Application completeness percentage
+How validation should work technically:
+
+All form data sent as JSON payload to a backend endpoint
+Backend validates against Tier 1 rules → if fail, return error response with specific field-level messages
+If Tier 1 passes → run Tier 2 checks → attach flags to record
+Run Tier 3 enrichment → attach computed fields
+Only then write to persistent storage
+⚠️ The offer letter is NOT released from this platform. IIT issues offer letters separately. This platform captures, validates, and consolidates applicant data. Get this distinction right.
+
+FR-4: Intelligence Layer (What Makes This an AI Project)
+Pick at least two from the following. You're not building ML models from scratch — you're integrating intelligence into a data pipeline.
+
+Intelligence Feature	What It Does	Suggested Approach
+Applicant Risk Scoring	Assign a 0-100 risk score based on gaps, backlogs, score trends, work relevance	Rule-based weighted scoring → later can be replaced with ML model
+Anomaly Detection	Flag applications with unusual patterns (e.g., PhD holder applying for entry-level, or 5 career switches in 3 years)	Statistical thresholds on key metrics, or simple clustering
+Auto-Categorization	Classify applicants into segments: "Strong Fit", "Needs Review", "Weak Fit"	Decision tree logic based on composite scores
+Predictive Dropout Risk	Based on similar historical profiles, predict likelihood of dropout	If historical data available — logistic regression. Otherwise, rule-based proxy
+Smart Form Assistance	Use an LLM to help users fill fields correctly (e.g., suggest university names, validate board names, explain what "lateral entry" means)	API call to Gemini/GPT for contextual help within the form
+Data Quality Scoring	Score each application's data completeness and consistency	Weighted checklist algorithm
+Minimum bar: Your intelligence layer must produce a quantitative output (a score, a classification, a flag) — not just a visualization. It must be computed programmatically, not manually.
+
+FR-5: Persistent Storage & Reporting
+Every validated application must be written to a shared, live-updating Google Sheet that stakeholders can view in real-time.
+
+Implementation approach:
+
+# Conceptual flow — you figure out the exact implementation
+
+# Option A: Google Sheets API (recommended)
+# 1. Create a Google Cloud project (free tier)
+# 2. Enable Google Sheets API
+# 3. Create a service account → download credentials JSON
+# 4. Share your target Sheet with the service account email
+# 5. Use gspread or google-api-python-client to write rows
+
+# Option B: Google Apps Script webhook
+# 1. Create a Google Sheet
+# 2. Extensions → Apps Script
+# 3. Write a doPost(e) function that appends data to the sheet
+# 4. Deploy as web app → get URL
+# 5. POST validated JSON to that URL from your backend
+
+# Option C: Export to Excel/CSV on Google Drive
+# 1. Use openpyxl or pandas to create .xlsx
+# 2. Upload to Google Drive via API or manually
+# 3. Script runs on schedule (cron) to update
+The Google Sheet must contain:
+
+One row per validated applicant
+All captured fields + all derived/computed fields
+Risk score and categorization from intelligence layer
+Timestamp of submission
+Validation status (Clean / Flagged / Under Review)
+Sheet should be read-only for viewers — only the platform writes to it
+Bonus (not required but impressive): A summary sheet or dashboard sheet that auto-computes:
+
+Total applications received
+Distribution by risk category
+Average scores by education path
+Applications per day (trend)
+Non-Functional Requirements
+Requirement	Specification	Why It Matters
+Deployable	Must run on a URL someone else can access. Localhost doesn't count.	Every interviewer will ask "can I see it live?"
+No hardcoded secrets	API keys, credentials in .env or environment variables. Never in source code.	Security basics. Instant reject in code review if violated.
+Error handling	Every API call wrapped in try/catch. User sees helpful messages, not stack traces.	Production systems don't crash visibly.
+Mobile responsive	Form must be usable on a phone screen. Not pixel-perfect — just usable.	60%+ of Indian users access web on mobile.
+Loading states	Show spinners/skeleton screens during API calls. No frozen UIs.	UX 101.
+README	Setup instructions that let a stranger run your project in < 5 minutes.	If your README doesn't work, your project doesn't exist.
+Deployment Options (All Free Tier)
+Pick what works for you. These are suggestions, not mandates.
+
+Stack Component	Free Options
+Frontend hosting	Vercel, Netlify, GitHub Pages, Render
+Backend/API	Render (free tier), Railway (trial), Replit, PythonAnywhere
+Database (if needed)	Supabase (free), Firebase Firestore (free tier), JSON file on server
+Google Sheets integration	gspread + service account, Google Apps Script webhook
+AI/LLM calls	Google AI Studio (Gemini free tier), Hugging Face Inference API (free)
+📝 You are free to use any tools, frameworks, or platforms. The above are starting points, not constraints. If you find something better, use it. Document why you chose it.
+
+Sprint Plan: How to Tackle This in 7 Days
+This is a suggested breakdown. Adapt to your pace, but do not skip the design phase.
+
+Day 1-2: DESIGN (do NOT code yet)
+├── Map all data fields and validation rules on paper/whiteboard
+├── Draw your system architecture (what talks to what)
+├── Decide your tech stack and write it down with reasoning
+├── Create your project repo with README skeleton
+└── Deliverable: Architecture document pushed to repo
+
+Day 3-4: CORE BUILD
+├── Build the enhanced input layer (education paths + work experience)
+├── Implement server-side validation engine (Tier 1 + Tier 2)
+├── Set up persistent storage (Google Sheets connection)
+└── Deliverable: Working form → validated data → appears in Google Sheet
+
+Day 5-6: INTELLIGENCE + POLISH
+├── Implement at least 2 intelligence features
+├── Connect reporting layer
+├── Error handling, loading states, mobile responsiveness
+├── Deploy to a live URL
+└── Deliverable: Deployed platform with intelligence layer active
+
+Day 7: DOCUMENTATION + DEMO PREP
+├── Complete README (setup, architecture, decisions, screenshots)
+├── Record a 3-minute demo video OR prepare live demo
+├── Push final code, clean up repo
+└── Deliverable: Final repo + live URL + demo ready
+What You Will Be Evaluated On
+Evaluation Rubric: 100 Points Total
+Scores are assigned per dimension. Logic and outcomes carry 3× the weight of UI.
+
+1. Validation Engine Quality — 30 points
+Why this matters: Every backend engineer's first job is making sure bad data never enters the system. Interviewers at Flipkart, Razorpay, and every fintech will test this.
+
+Score	Criteria
+25-30	All Tier 1 rules enforced server-side. Tier 2 flags working. Field-level error messages. Handles edge cases (diploma path, overlapping work dates, CGPA conversion).
+18-24	Most Tier 1 rules work. Some edge cases missed. Error messages exist but are generic.
+10-17	Basic required-field validation only. Mix of client-side and server-side. Several rules missing.
+0-9	Validation is mostly client-side required attributes. No server-side logic.
+How it will be checked: Evaluator will submit 5 test applications — 2 clean, 2 with Tier 1 violations, 1 with Tier 2 flags. Your system must correctly accept, reject, or flag each one.
+
+2. Intelligence Layer — 25 points
+Why this matters: The difference between a "developer" and an "AI engineer" is the ability to embed intelligence into systems. This is literally the job you're training for.
+
+Score	Criteria
+20-25	Two or more intelligence features producing quantitative outputs. Scores/classifications visible in the UI and in the Google Sheet. Logic is documented and explainable.
+13-19	One intelligence feature working well with clear output. Second feature partially implemented or conceptual.
+6-12	Intelligence layer exists but output is cosmetic (e.g., just color-coding without actual computation behind it).
+0-5	No intelligence layer. Or a feature that's just a hardcoded if-else with no real analytical value.
+How it will be checked: Evaluator will ask you to explain your scoring/classification logic for a specific applicant record. "Why did this person get a risk score of 73?" You must answer with the actual computation.
+
+3. Data Architecture & Persistence — 20 points
+Why this matters: Data engineering is 80% of ML work. If you can't get data to flow cleanly from input to storage to reporting, nothing downstream works.
+
+Score	Criteria
+16-20	Google Sheet auto-updates with every submission. All fields + derived fields present. Sheet is well-structured (headers, data types consistent). Summary/analytics sheet is a bonus.
+10-15	Data reaches Google Sheet but some fields missing or formatting inconsistent. Manual steps involved.
+5-9	Data stored locally (JSON/SQLite) but no Google Sheet integration. Or Sheet exists but requires manual update.
+0-4	No persistent storage. Data lost on page refresh.
+How it will be checked: Submit 3 applications through your platform. Evaluator opens the Google Sheet and verifies all 3 appear with correct data within 30 seconds.
+
+4. Code Quality & Deployment — 15 points
+Why this matters: You will write code in teams. If your code is unreadable, you're slowing everyone down. If it's not deployed, it doesn't exist.
+
+Score	Criteria
+12-15	Live URL works. Code is clean, commented, organized into logical files/modules. .env for secrets. Error handling throughout. README lets a stranger run it in < 5 min.
+8-11	Deployed but has bugs. Code is somewhat organized. README exists but incomplete. Some hardcoded values.
+4-7	Runs locally only. Code works but messy. Limited or no documentation.
+0-3	Doesn't run. Or only a frontend mockup with no backend.
+How it will be checked: Evaluator clones your repo, follows README, and attempts to run the project. If they can't get it running in 5 minutes, maximum score for this dimension is 7.
+
+5. Product Thinking & Edge Cases — 10 points
+Why this matters: Product sense is what separates an engineer who ships features from one who ships solutions. PMs and CTOs look for this.
+
+Score	Criteria
+8-10	Handles Indian education nuances correctly (diploma path, lateral entry, gap years). Work experience module captures meaningful data. UX adapts based on user selections (e.g., show diploma fields only if diploma path selected).
+5-7	Most paths handled but some edge cases missed. UX is functional but doesn't adapt to context.
+2-4	Only standard 10th → 12th → UG path works. Work experience is basic. No contextual adaptation.
+0-1	Same as v1 — only degree capture, no Indian education system awareness.
+How it will be checked: Evaluator will walk through 3 personas — a diploma-path student, a working professional with 5+ years experience and a career gap, and a fresher straight from college. All 3 must flow correctly through your system.
+
+Score Interpretation
+Total Score	Band	Signal
+80-100	🟢 Strong Ship	Demonstrates engineering thinking beyond Week 1 level. Prioritized for stretch challenges.
+60-79	🟡 Solid Progress	Core requirements met. Gaps in polish or edge cases. Clear improvement from v1.
+40-59	🟠 Needs Iteration	Significant gaps in validation or intelligence layer. Follow-up review scheduled.
+0-39	🔴 Below Bar	Minimal improvement from v1. Mandatory 1:1 with TA to identify blockers and remediation plan.
+Submission Requirements
+Item	Format	Where
+Source Code	GitHub repo (public or shared with evaluators)	Push to your iitgn-aiml-{name}/week-01/admitguard-v2/ directory
+Live URL	Deployed application URL	Include in README and in your Discussion reply
+Google Sheet	Shared link (viewer access)	Include in README
+README	Markdown in repo root	Must contain: architecture diagram, tech stack with reasoning, setup instructions, live URL, Google Sheet link, screenshots
+Demo	3-min video OR live walkthrough during review session	Upload video link in Discussion thread OR be prepared for live demo
+Discussion Reply	Commit link + approach explanation (min 5 sentences)	Reply to the Sprint Brief Discussion thread on GitHub
+Commit message format: feat(admitguard-v2): <what you did> — e.g., feat(admitguard-v2): add work experience validation engine
+
+What "Done" Looks Like
+A stranger opens your live URL. They fill in an application as a diploma-path student with 3 years of work experience and a 6-month career gap. They submit.
+
+The form adapts to their education path (diploma fields shown, 12th fields hidden)
+Server-side validation catches any errors and returns specific field-level messages
+On success, the data appears in the Google Sheet within seconds
+The applicant gets a risk score and a categorization visible on a confirmation/summary screen
+The evaluator can open the Google Sheet and see the record with all derived fields populated
+If your system can do this, you've shipped something real.
+
+A Note on AI-Assisted Development
+You're expected to use AI coding tools (Google AI Studio, ChatGPT, Claude, Copilot, Cursor — whatever works for you). That's the whole point of vibe coding.
+
+The requirement: For any AI-generated code you use, you must be able to:
+
+Explain what every line does
+Explain why you chose this approach over alternatives
+Identify at least one limitation or edge case the AI missed
+If you can't do all three, you haven't learned anything — you've just copy-pasted. The viva will test this.
+
+This brief mirrors the kind of requirements document you'll receive from engineering leads and product managers in your first job. The ambiguity is intentional — real specs always have gaps. Your job is to identify them, make reasonable decisions, and document why.

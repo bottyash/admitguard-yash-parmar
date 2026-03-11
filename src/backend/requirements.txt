@@ -1,2 +1,6 @@
 Flask==3.1.0
 flask-cors==5.0.1
+python-dotenv==1.1.0
+gspread==6.1.4
+google-auth==2.38.0
+ollama==0.4.7
