@@ -1,12 +1,9 @@
 """
-AdmitGuard — SQLite Database Layer
-Sprint 3+: Persistent storage using SQLite (built-in Python module).
+AdmitGuard v2 — SQLite Database Layer
+7 tables: candidates, education_entries, work_entries,
+          cohorts, cohort_params, email_log, audit_log
 
 Database file: admitguard.db (created next to this file on first run)
-
-Tables:
-  - candidates: one row per submitted candidate
-  - audit_log:  one row per submission event
 """
 
 import sqlite3
@@ -26,39 +23,139 @@ def get_connection():
 
 
 def init_db():
-    """Create tables if they don't exist. Called on app startup."""
+    """Create all tables if they don't exist. Called on app startup."""
     conn = get_connection()
     with conn:
         conn.executescript("""
+            -- =================================================================
+            -- CANDIDATES — Core applicant info + intelligence fields
+            -- =================================================================
             CREATE TABLE IF NOT EXISTS candidates (
                 id                      TEXT PRIMARY KEY,
                 full_name               TEXT NOT NULL,
                 email                   TEXT NOT NULL UNIQUE,
                 phone                   TEXT NOT NULL,
                 date_of_birth           TEXT,
-                highest_qualification   TEXT NOT NULL,
-                graduation_year         TEXT,
-                percentage_cgpa         TEXT,
-                score_type              TEXT DEFAULT 'percentage',
-                screening_test_score    TEXT,
-                interview_status        TEXT NOT NULL,
                 aadhaar                 TEXT NOT NULL,
-                offer_letter_sent       TEXT NOT NULL,
-                exceptions              TEXT DEFAULT '[]',
-                exception_count         INTEGER DEFAULT 0,
+                education_path          TEXT DEFAULT 'A',
+
+                -- Intelligence layer outputs
+                risk_score              REAL DEFAULT 0,
+                category                TEXT DEFAULT 'Pending',
+                data_quality_score      REAL DEFAULT 0,
+                experience_bucket       TEXT DEFAULT 'Fresher',
+                completeness_pct        REAL DEFAULT 0,
+
+                -- Flags & status
+                flags                   TEXT DEFAULT '[]',
+                llm_verification_flags  TEXT DEFAULT '[]',
+                anomaly_narration       TEXT DEFAULT '',
                 flagged_for_review      INTEGER DEFAULT 0,
-                submitted_at            TEXT NOT NULL
+
+                -- Cohort association
+                cohort_id               TEXT,
+
+                -- Metadata
+                submitted_at            TEXT NOT NULL,
+
+                FOREIGN KEY (cohort_id) REFERENCES cohorts(id)
+                    ON DELETE SET NULL
             );
 
-            CREATE TABLE IF NOT EXISTS audit_log (
+            -- =================================================================
+            -- EDUCATION ENTRIES — One row per education level per candidate
+            -- =================================================================
+            CREATE TABLE IF NOT EXISTS education_entries (
                 id                  TEXT PRIMARY KEY,
                 candidate_id        TEXT NOT NULL,
-                candidate_name      TEXT NOT NULL,
-                candidate_email     TEXT NOT NULL,
+                level               TEXT NOT NULL,
+                board_university    TEXT NOT NULL,
+                stream              TEXT DEFAULT '',
+                year_of_passing     INTEGER,
+                score               REAL,
+                score_scale         TEXT DEFAULT 'percentage',
+                normalized_score    REAL DEFAULT 0,
+                backlog_count       INTEGER DEFAULT 0,
+                gap_months          INTEGER DEFAULT 0,
+                sort_order          INTEGER DEFAULT 0,
+
+                FOREIGN KEY (candidate_id) REFERENCES candidates(id)
+                    ON DELETE CASCADE
+            );
+
+            -- =================================================================
+            -- WORK ENTRIES — One row per job per candidate
+            -- =================================================================
+            CREATE TABLE IF NOT EXISTS work_entries (
+                id                  TEXT PRIMARY KEY,
+                candidate_id        TEXT NOT NULL,
+                company_name        TEXT NOT NULL,
+                designation         TEXT NOT NULL,
+                domain              TEXT DEFAULT 'Other',
+                start_date          TEXT,
+                end_date            TEXT,
+                employment_type     TEXT DEFAULT 'Full-time',
+                skills              TEXT DEFAULT '[]',
+                tenure_months       INTEGER DEFAULT 0,
+                sort_order          INTEGER DEFAULT 0,
+
+                FOREIGN KEY (candidate_id) REFERENCES candidates(id)
+                    ON DELETE CASCADE
+            );
+
+            -- =================================================================
+            -- COHORTS — Intake cohorts with customizable params
+            -- =================================================================
+            CREATE TABLE IF NOT EXISTS cohorts (
+                id                  TEXT PRIMARY KEY,
+                name                TEXT NOT NULL UNIQUE,
+                description         TEXT DEFAULT '',
+                is_active           INTEGER DEFAULT 1,
+                created_at          TEXT NOT NULL
+            );
+
+            -- =================================================================
+            -- COHORT PARAMS — Per-cohort rule overrides (key-value pairs)
+            -- =================================================================
+            CREATE TABLE IF NOT EXISTS cohort_params (
+                id                  TEXT PRIMARY KEY,
+                cohort_id           TEXT NOT NULL,
+                param_name          TEXT NOT NULL,
+                param_value         TEXT NOT NULL,
+
+                FOREIGN KEY (cohort_id) REFERENCES cohorts(id)
+                    ON DELETE CASCADE,
+                UNIQUE(cohort_id, param_name)
+            );
+
+            -- =================================================================
+            -- EMAIL LOG — Sent/received emails per candidate
+            -- =================================================================
+            CREATE TABLE IF NOT EXISTS email_log (
+                id                  TEXT PRIMARY KEY,
+                candidate_id        TEXT NOT NULL,
+                subject             TEXT NOT NULL,
+                body                TEXT NOT NULL,
+                direction           TEXT NOT NULL DEFAULT 'SENT',
+                status              TEXT DEFAULT 'delivered',
+                message_id          TEXT DEFAULT '',
+                sent_at             TEXT NOT NULL,
+
+                FOREIGN KEY (candidate_id) REFERENCES candidates(id)
+                    ON DELETE CASCADE
+            );
+
+            -- =================================================================
+            -- AUDIT LOG — All actions (submissions, edits, deletes, emails)
+            -- =================================================================
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id                  TEXT PRIMARY KEY,
+                candidate_id        TEXT,
+                candidate_name      TEXT DEFAULT '',
+                candidate_email     TEXT DEFAULT '',
                 action              TEXT NOT NULL DEFAULT 'SUBMISSION',
-                exception_count     INTEGER DEFAULT 0,
-                flagged_for_review  INTEGER DEFAULT 0,
-                exceptions          TEXT DEFAULT '[]',
+                details             TEXT DEFAULT '{}',
+                cohort_id           TEXT,
                 timestamp           TEXT NOT NULL
             );
         """)

@@ -1,6 +1,6 @@
 """
-AdmitGuard — Candidate API Routes
-Sprint 2: Validate (strict + soft), exception handling, create, list, audit log.
+AdmitGuard v2 — Candidate API Routes
+Handles validation, submission, listing, audit log, dashboard, export.
 """
 
 from flask import Blueprint, request, jsonify, Response
@@ -30,6 +30,7 @@ from models.candidate import (
     get_flagged_count,
     get_exception_rate,
     get_audit_log,
+    get_dashboard_stats,
 )
 
 candidates_bp = Blueprint("candidates", __name__)
@@ -39,23 +40,8 @@ candidates_bp = Blueprint("candidates", __name__)
 def validate_candidate():
     """
     Validate candidate data against ALL rules (strict + soft).
-    Handles exception overrides for soft rules.
-    
-    Request body: {
-        ...candidate fields...,
-        "exceptions": {
-            "field_name": {"enabled": true, "rationale": "..."},
-            ...
-        }
-    }
-    Response: {
-        "valid": bool,
-        "errors": { field: error_message, ... },
-        "strict_results": { ... },
-        "soft_results": { ... },
-        "exception_count": int,
-        "flagged_for_review": bool
-    }
+    v2: Will be expanded to handle education_entries + work_entries.
+    Currently maintains v1 compatibility for existing validators.
     """
     data = request.get_json()
     if not data:
@@ -108,20 +94,13 @@ def validate_candidate():
 
 @candidates_bp.route("/api/validate/<field_name>", methods=["POST"])
 def validate_single_field(field_name):
-    """
-    Validate a single field (strict or soft).
-    For soft fields, also handles exception + rationale validation.
-    
-    Request body: JSON with candidate fields + optional exceptions
-    Response: { "valid": bool, "error": str|null, ... }
-    """
+    """Validate a single field (strict or soft)."""
     data = request.get_json()
     if not data:
         return jsonify({"valid": False, "error": "Request body is required."}), 400
 
     existing_emails = get_all_emails()
 
-    # Map field names to validator functions
     from validators.strict_validators import (
         validate_full_name,
         validate_email,
@@ -169,7 +148,6 @@ def validate_single_field(field_name):
     if field_name in soft_validators:
         result = soft_validators[field_name]()
 
-        # Check if exception is being applied
         exceptions = data.get("exceptions", {})
         exception_info = exceptions.get(field_name, {})
         exception_enabled = exception_info.get("enabled", False)
@@ -197,17 +175,8 @@ def validate_single_field(field_name):
 @candidates_bp.route("/api/candidates", methods=["POST"])
 def create_candidate():
     """
-    Submit a new candidate after full validation (strict + soft).
-    Blocks if strict rules fail or soft rules fail without valid exceptions.
-    
-    Request body: {
-        ...candidate fields...,
-        "exceptions": {
-            "field_name": {"enabled": true, "rationale": "..."},
-            ...
-        }
-    }
-    Response: Created candidate with ID, timestamp, and exception details
+    Submit a new candidate. v2 accepts education_entries + work_entries.
+    Falls back to v1 flat validation if no education_entries provided.
     """
     data = request.get_json()
     if not data:
@@ -249,10 +218,11 @@ def create_candidate():
             "soft_errors": soft_errors,
         }), 422
 
-    # ---- All passed — collect exception details ----
+    # ---- Collect flags ----
     exception_count = count_exceptions(soft_results)
     flagged = is_flagged_for_review(exception_count)
 
+    flags = []
     exceptions_applied = []
     for field, result in soft_results.items():
         if result.get("exception_applied"):
@@ -262,34 +232,55 @@ def create_candidate():
                 "rationale": exception_info.get("rationale", ""),
             })
 
-    # Store candidate
+    if flagged:
+        flags.append({
+            "type": "EXCEPTION_THRESHOLD",
+            "message": f"{exception_count} exceptions — flagged for manager review",
+        })
+
+    # ---- Extract v2 data ----
+    education_entries = data.get("education_entries", [])
+    work_entries = data.get("work_entries", [])
+
+    # ---- Store candidate ----
+    intelligence = {
+        "risk_score": 0,
+        "category": "Pending",
+        "data_quality_score": 0,
+        "experience_bucket": "Fresher",
+        "completeness_pct": 0,
+        "anomaly_narration": "",
+        "flagged_for_review": flagged,
+    }
+
     candidate = add_candidate(
         data,
-        exceptions_applied=exceptions_applied,
-        exception_count=exception_count,
-        flagged_for_review=flagged,
+        education_entries=education_entries,
+        work_entries=work_entries,
+        intelligence=intelligence,
+        flags=flags,
     )
 
     response = {
         "success": True,
         "message": "Candidate submitted successfully.",
         "candidate": candidate,
-        "exception_count": exception_count,
+        "flags": flags,
         "flagged_for_review": flagged,
     }
 
     if flagged:
-        response["warning"] = f"⚠️ This entry has {exception_count} exceptions and has been flagged for manager review."
+        response["warning"] = (
+            f"⚠️ This entry has {exception_count} exceptions "
+            f"and has been flagged for manager review."
+        )
 
     return jsonify(response), 201
 
 
 @candidates_bp.route("/api/candidates", methods=["GET"])
 def list_candidates():
-    """
-    List all submitted candidates.
-    Response: { "candidates": [...], "total": int }
-    """
+    """List all submitted candidates."""
     candidates = get_all_candidates()
     return jsonify({
         "candidates": candidates,
@@ -299,23 +290,16 @@ def list_candidates():
 
 @candidates_bp.route("/api/candidates/<candidate_id>", methods=["GET"])
 def get_candidate(candidate_id):
-    """
-    Get a single candidate by ID.
-    Response: candidate object or 404
-    """
+    """Get a single candidate by ID with full detail."""
     candidate = get_candidate_by_id(candidate_id)
     if not candidate:
         return jsonify({"error": "Candidate not found."}), 404
-
     return jsonify({"candidate": candidate}), 200
 
 
 @candidates_bp.route("/api/audit-log", methods=["GET"])
 def audit_log():
-    """
-    Get the audit log of all submissions with exception details.
-    Response: { "log": [...], "total": int }
-    """
+    """Get the audit log."""
     log = get_audit_log()
     return jsonify({
         "log": log,
@@ -325,48 +309,30 @@ def audit_log():
 
 @candidates_bp.route("/api/dashboard", methods=["GET"])
 def dashboard():
-    """
-    Get dashboard statistics.
-    Response: {
-        "total_submissions": int,
-        "flagged_count": int,
-        "exception_rate": float
-    }
-    """
-    return jsonify({
-        "total_submissions": get_candidate_count(),
-        "flagged_count": get_flagged_count(),
-        "exception_rate": get_exception_rate(),
-    }), 200
+    """Get dashboard statistics including intelligence summary."""
+    stats = get_dashboard_stats()
+    return jsonify(stats), 200
 
 
 @candidates_bp.route("/api/export/csv", methods=["GET"])
 def export_csv():
-    """
-    Export all candidates as a downloadable CSV file.
-    Response: text/csv attachment
-    """
+    """Export all candidates as CSV."""
     candidates = get_all_candidates()
 
     fields = [
         "id", "full_name", "email", "phone", "date_of_birth",
-        "highest_qualification", "graduation_year", "percentage_cgpa",
-        "score_type", "screening_test_score", "interview_status",
-        "aadhaar", "offer_letter_sent", "exception_count",
+        "aadhaar", "education_path", "risk_score", "category",
+        "data_quality_score", "experience_bucket", "completeness_pct",
         "flagged_for_review", "submitted_at",
     ]
 
     output = io.StringIO()
     writer = csv.DictWriter(
-        output,
-        fieldnames=fields,
-        extrasaction="ignore",
-        quoting=csv.QUOTE_ALL,
+        output, fieldnames=fields, extrasaction="ignore", quoting=csv.QUOTE_ALL,
     )
     writer.writeheader()
     for c in candidates:
         row = {f: c.get(f, "") for f in fields}
-        # Flatten booleans for CSV readability
         row["flagged_for_review"] = "Yes" if c.get("flagged_for_review") else "No"
         writer.writerow(row)
 
@@ -374,20 +340,17 @@ def export_csv():
     return Response(
         output.getvalue(),
         mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=admitguard_export.csv"},
+        headers={"Content-Disposition": "attachment; filename=admitguard_v2_export.csv"},
     )
 
 
 @candidates_bp.route("/api/export/json", methods=["GET"])
 def export_json():
-    """
-    Export all candidates as a downloadable JSON file.
-    Response: application/json attachment
-    """
+    """Export all candidates as JSON."""
     candidates = get_all_candidates()
     payload = _json.dumps(candidates, indent=2, ensure_ascii=False)
     return Response(
         payload,
         mimetype="application/json",
-        headers={"Content-Disposition": "attachment; filename=admitguard_export.json"},
+        headers={"Content-Disposition": "attachment; filename=admitguard_v2_export.json"},
     )

@@ -1,5 +1,5 @@
 """
-AdmitGuard — Admin API Routes
+AdmitGuard v2 — Admin API Routes
 Provides login/logout, candidate listing, editing and deletion for the admin panel.
 Access the admin UI at: /prabandhak
 """
@@ -16,18 +16,16 @@ from models.candidate import (
     get_candidate_by_id,
     update_candidate,
     delete_candidate,
-    get_candidate_count,
-    get_flagged_count,
-    get_exception_rate,
+    get_dashboard_stats,
 )
 
 admin_bp = Blueprint("admin", __name__)
 
 # ---------------------------------------------------------------------------
-# Default admin credentials (hardcoded for development)
+# Admin credentials from environment (fallback to defaults for dev)
 # ---------------------------------------------------------------------------
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "admin123"
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
 
 # ---------------------------------------------------------------------------
@@ -84,14 +82,11 @@ def admin_status():
 @admin_required
 def admin_list_candidates():
     candidates = get_all_candidates()
+    stats = get_dashboard_stats()
     return jsonify({
         "candidates": candidates,
         "total": len(candidates),
-        "stats": {
-            "total": get_candidate_count(),
-            "flagged": get_flagged_count(),
-            "exception_rate": get_exception_rate(),
-        },
+        "stats": stats,
     }), 200
 
 
