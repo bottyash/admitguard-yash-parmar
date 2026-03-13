@@ -1,34 +1,24 @@
 """
 AdmitGuard v2 — Candidate API Routes
-Handles validation, submission, listing, audit log, dashboard, export.
+Full 3-tier validation pipeline: HARD REJECT → SOFT FLAG → ENRICHMENT.
 """
 
 from flask import Blueprint, request, jsonify, Response
 import csv, io, json as _json
 
-import sys
-import os
+import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from validators.strict_validators import validate_all_strict
-from validators.soft_validators import (
-    validate_all_soft,
-    count_exceptions,
-    is_flagged_for_review,
-    validate_date_of_birth,
-    validate_graduation_year,
-    validate_percentage_cgpa,
-    validate_screening_score,
-    validate_rationale,
-)
+from validators.soft_validators import validate_all_soft, is_flagged_for_review
+from validators.education_validators import validate_all_education
+from validators.work_validators import validate_all_work
 from models.candidate import (
     add_candidate,
     get_all_candidates,
     get_candidate_by_id,
     get_all_emails,
-    get_candidate_count,
-    get_flagged_count,
-    get_exception_rate,
+    get_all_phones,
     get_audit_log,
     get_dashboard_stats,
 )
@@ -36,256 +26,242 @@ from models.candidate import (
 candidates_bp = Blueprint("candidates", __name__)
 
 
+# =============================================================================
+# 3-TIER VALIDATION (validate without saving)
+# =============================================================================
+
 @candidates_bp.route("/api/validate", methods=["POST"])
 def validate_candidate():
     """
-    Validate candidate data against ALL rules (strict + soft).
-    v2: Will be expanded to handle education_entries + work_entries.
-    Currently maintains v1 compatibility for existing validators.
+    Full 3-tier validation preview — does NOT save.
+    Returns Tier 1 errors, Tier 2 flags, and Tier 3 enrichment.
     """
     data = request.get_json()
     if not data:
         return jsonify({"valid": False, "error": "Request body is required."}), 400
 
     existing_emails = get_all_emails()
+    existing_phones = get_all_phones()
 
-    # Run strict validations
-    strict_results = validate_all_strict(data, existing_emails)
+    # ---- TIER 1: HARD REJECT ----
+    tier1 = validate_all_strict(data, existing_emails, existing_phones)
+    tier1_errors = {f: r["error"] for f, r in tier1.items() if not r["valid"]}
 
-    # Run soft validations with exception handling
-    exceptions = data.get("exceptions", {})
-    soft_results = validate_all_soft(data, exceptions)
+    # ---- Education validation ----
+    education_entries = data.get("education_entries", [])
+    education_path = data.get("education_path", "A")
+    edu_result = None
+    if education_entries:
+        edu_result = validate_all_education(education_entries, education_path)
+        if not edu_result["valid"]:
+            # Path/chronological errors are Tier 1
+            for err in edu_result.get("path_errors", []):
+                tier1_errors[f"education_path"] = err
+            for err in edu_result.get("chronological_errors", []):
+                tier1_errors[f"education_chronology"] = err
+            for ee in edu_result.get("entry_errors", []):
+                for field, msg in ee["errors"].items():
+                    tier1_errors[f"education[{ee['entry_index']}].{field}"] = msg
 
-    # Collect all errors
-    errors = {}
-    soft_errors = {}
+    # ---- Work validation ----
+    work_entries = data.get("work_entries", [])
+    work_result = None
+    if work_entries:
+        work_result = validate_all_work(work_entries)
+        if not work_result["valid"]:
+            for we in work_result.get("entry_errors", []):
+                for field, msg in we["errors"].items():
+                    tier1_errors[f"work[{we['entry_index']}].{field}"] = msg
 
-    for field, result in strict_results.items():
-        if not result["valid"]:
-            errors[field] = result["error"]
+    # ---- TIER 2: SOFT FLAGS ----
+    tier2_flags = validate_all_soft(data, edu_result, work_result)
 
-    for field, result in soft_results.items():
-        if not result["valid"]:
-            if result.get("exception_allowed"):
-                soft_errors[field] = {
-                    "error": result["error"],
-                    "exception_allowed": True,
-                    "rationale_error": result.get("rationale_error"),
-                }
-            else:
-                errors[field] = result["error"]
+    # ---- Compute enrichment preview ----
+    enrichment = {}
+    if work_result:
+        enrichment = work_result.get("derived", {})
+    if edu_result:
+        enrichment["total_education_gap_months"] = edu_result.get("total_gap_months", 0)
+        enrichment["total_backlogs"] = edu_result.get("total_backlogs", 0)
 
-    # Calculate exception stats
-    exception_count = count_exceptions(soft_results)
-    flagged = is_flagged_for_review(exception_count)
-
-    is_valid = len(errors) == 0 and len(soft_errors) == 0
+    is_valid = len(tier1_errors) == 0
 
     return jsonify({
         "valid": is_valid,
-        "errors": errors,
-        "soft_errors": soft_errors,
-        "strict_results": strict_results,
-        "soft_results": soft_results,
-        "exception_count": exception_count,
-        "flagged_for_review": flagged,
+        "tier1_errors": tier1_errors,
+        "tier2_flags": tier2_flags,
+        "enrichment": enrichment,
+        "education_warnings": edu_result.get("warnings", []) if edu_result else [],
+        "work_overlaps": work_result.get("overlaps", []) if work_result else [],
+        "flagged_for_review": is_flagged_for_review(tier2_flags),
     }), 200
 
 
+# =============================================================================
+# SINGLE FIELD VALIDATION
+# =============================================================================
+
 @candidates_bp.route("/api/validate/<field_name>", methods=["POST"])
 def validate_single_field(field_name):
-    """Validate a single field (strict or soft)."""
+    """Validate a single field (Tier 1 only — instant feedback)."""
     data = request.get_json()
     if not data:
         return jsonify({"valid": False, "error": "Request body is required."}), 400
 
     existing_emails = get_all_emails()
+    existing_phones = get_all_phones()
 
     from validators.strict_validators import (
         validate_full_name,
         validate_email,
         validate_phone,
-        validate_qualification,
-        validate_interview_status,
+        validate_age,
         validate_aadhaar,
-        validate_offer_letter,
     )
 
-    strict_validators = {
+    validators = {
         "full_name": lambda: validate_full_name(data.get("full_name", "")),
         "email": lambda: validate_email(data.get("email", ""), existing_emails),
-        "phone": lambda: validate_phone(data.get("phone", "")),
-        "highest_qualification": lambda: validate_qualification(
-            data.get("highest_qualification", "")
-        ),
-        "interview_status": lambda: validate_interview_status(
-            data.get("interview_status", "")
-        ),
+        "phone": lambda: validate_phone(data.get("phone", ""), existing_phones),
+        "date_of_birth": lambda: validate_age(data.get("date_of_birth", "")),
         "aadhaar": lambda: validate_aadhaar(data.get("aadhaar", "")),
-        "offer_letter_sent": lambda: validate_offer_letter(
-            data.get("offer_letter_sent", ""),
-            data.get("interview_status", ""),
-        ),
     }
 
-    soft_validators = {
-        "date_of_birth": lambda: validate_date_of_birth(data.get("date_of_birth", "")),
-        "graduation_year": lambda: validate_graduation_year(data.get("graduation_year", "")),
-        "percentage_cgpa": lambda: validate_percentage_cgpa(
-            data.get("percentage_cgpa", ""),
-            data.get("score_type", "percentage"),
-        ),
-        "screening_test_score": lambda: validate_screening_score(
-            data.get("screening_test_score", "")
-        ),
-    }
-
-    if field_name in strict_validators:
-        result = strict_validators[field_name]()
-        result["rule_type"] = "strict"
-        return jsonify(result), 200
-
-    if field_name in soft_validators:
-        result = soft_validators[field_name]()
-
-        exceptions = data.get("exceptions", {})
-        exception_info = exceptions.get(field_name, {})
-        exception_enabled = exception_info.get("enabled", False)
-
-        result["exception_applied"] = False
-        result["rationale_valid"] = None
-        result["rationale_error"] = None
-
-        if not result["valid"] and result.get("exception_allowed") and exception_enabled:
-            rationale = exception_info.get("rationale", "")
-            rationale_result = validate_rationale(rationale)
-            result["rationale_valid"] = rationale_result["valid"]
-            result["rationale_error"] = rationale_result.get("error")
-
-            if rationale_result["valid"]:
-                result["exception_applied"] = True
-                result["valid"] = True
-                result["error"] = None
-
+    if field_name in validators:
+        result = validators[field_name]()
         return jsonify(result), 200
 
     return jsonify({"valid": False, "error": f"Unknown field: {field_name}"}), 400
 
 
+# =============================================================================
+# SUBMISSION — Full 3-Tier Pipeline
+# =============================================================================
+
 @candidates_bp.route("/api/candidates", methods=["POST"])
 def create_candidate():
     """
-    Submit a new candidate. v2 accepts education_entries + work_entries.
-    Falls back to v1 flat validation if no education_entries provided.
+    Submit a new candidate through the full 3-tier pipeline:
+      Tier 1: HARD REJECT → if fails, 422 with errors
+      Tier 2: SOFT FLAG → data saved but flagged
+      Tier 3: ENRICHMENT → derived fields computed and stored
     """
     data = request.get_json()
     if not data:
         return jsonify({"error": "Request body is required."}), 400
 
-    # ---- Strict validation ----
     existing_emails = get_all_emails()
-    strict_results = validate_all_strict(data, existing_emails)
-
-    strict_errors = {}
-    for field, result in strict_results.items():
-        if not result["valid"]:
-            strict_errors[field] = result["error"]
-
-    if strict_errors:
-        return jsonify({
-            "success": False,
-            "message": "Strict validation failed. These errors cannot be overridden.",
-            "errors": strict_errors,
-        }), 422
-
-    # ---- Soft validation with exceptions ----
-    exceptions = data.get("exceptions", {})
-    soft_results = validate_all_soft(data, exceptions)
-
-    soft_errors = {}
-    for field, result in soft_results.items():
-        if not result["valid"]:
-            soft_errors[field] = {
-                "error": result["error"],
-                "exception_allowed": result.get("exception_allowed", False),
-                "rationale_error": result.get("rationale_error"),
-            }
-
-    if soft_errors:
-        return jsonify({
-            "success": False,
-            "message": "Soft rule validation failed. Enable exceptions with valid rationale to override.",
-            "soft_errors": soft_errors,
-        }), 422
-
-    # ---- Collect flags ----
-    exception_count = count_exceptions(soft_results)
-    flagged = is_flagged_for_review(exception_count)
-
-    flags = []
-    exceptions_applied = []
-    for field, result in soft_results.items():
-        if result.get("exception_applied"):
-            exception_info = exceptions.get(field, {})
-            exceptions_applied.append({
-                "field": field,
-                "rationale": exception_info.get("rationale", ""),
-            })
-
-    if flagged:
-        flags.append({
-            "type": "EXCEPTION_THRESHOLD",
-            "message": f"{exception_count} exceptions — flagged for manager review",
-        })
-
-    # ---- Extract v2 data ----
+    existing_phones = get_all_phones()
     education_entries = data.get("education_entries", [])
     work_entries = data.get("work_entries", [])
+    education_path = data.get("education_path", "A")
 
-    # ---- Store candidate ----
+    # ================================================================
+    # TIER 1: HARD REJECT
+    # ================================================================
+    tier1 = validate_all_strict(data, existing_emails, existing_phones)
+    tier1_errors = {f: r["error"] for f, r in tier1.items() if not r["valid"]}
+
+    # Education validation (path + chronological = Tier 1)
+    edu_result = None
+    if education_entries:
+        edu_result = validate_all_education(education_entries, education_path)
+        if not edu_result["valid"]:
+            for err in edu_result.get("path_errors", []):
+                tier1_errors["education_path"] = err
+            for err in edu_result.get("chronological_errors", []):
+                tier1_errors["education_chronology"] = err
+            for ee in edu_result.get("entry_errors", []):
+                for field, msg in ee["errors"].items():
+                    tier1_errors[f"education[{ee['entry_index']}].{field}"] = msg
+
+    # Work validation (entry errors = Tier 1)
+    work_result = None
+    if work_entries:
+        work_result = validate_all_work(work_entries)
+        if not work_result["valid"]:
+            for we in work_result.get("entry_errors", []):
+                for field, msg in we["errors"].items():
+                    tier1_errors[f"work[{we['entry_index']}].{field}"] = msg
+
+    if tier1_errors:
+        return jsonify({
+            "success": False,
+            "tier": 1,
+            "message": "Validation failed. Please fix the errors below.",
+            "errors": tier1_errors,
+        }), 422
+
+    # ================================================================
+    # TIER 2: SOFT FLAGS
+    # ================================================================
+    tier2_flags = validate_all_soft(data, edu_result, work_result)
+    flagged = is_flagged_for_review(tier2_flags)
+
+    # ================================================================
+    # TIER 3: ENRICHMENT
+    # ================================================================
+    # Get enriched education entries (with normalized scores + gap months)
+    enriched_education = edu_result["entries"] if edu_result else education_entries
+    enriched_work = work_result["entries"] if work_result else work_entries
+
+    # Compute intelligence placeholders (Phase 7 will replace with real scoring)
+    work_derived = work_result.get("derived", {}) if work_result else {}
+
     intelligence = {
-        "risk_score": 0,
+        "risk_score": 0,  # Will be computed in Phase 7
         "category": "Pending",
         "data_quality_score": 0,
-        "experience_bucket": "Fresher",
-        "completeness_pct": 0,
+        "experience_bucket": work_derived.get("experience_bucket", "Fresher"),
+        "completeness_pct": _compute_completeness(data, education_entries, work_entries),
         "anomaly_narration": "",
         "flagged_for_review": flagged,
     }
 
+    # ================================================================
+    # SAVE
+    # ================================================================
     candidate = add_candidate(
         data,
-        education_entries=education_entries,
-        work_entries=work_entries,
+        education_entries=enriched_education,
+        work_entries=enriched_work,
         intelligence=intelligence,
-        flags=flags,
+        flags=tier2_flags,
     )
 
     response = {
         "success": True,
+        "tier": 3,
         "message": "Candidate submitted successfully.",
         "candidate": candidate,
-        "flags": flags,
+        "tier2_flags": tier2_flags,
+        "enrichment": {
+            "experience_bucket": work_derived.get("experience_bucket", "Fresher"),
+            "total_experience_months": work_derived.get("total_experience_months", 0),
+            "total_education_gap_months": edu_result.get("total_gap_months", 0) if edu_result else 0,
+            "total_backlogs": edu_result.get("total_backlogs", 0) if edu_result else 0,
+        },
         "flagged_for_review": flagged,
     }
 
     if flagged:
         response["warning"] = (
-            f"⚠️ This entry has {exception_count} exceptions "
+            f"⚠️ This entry has {len(tier2_flags)} flag(s) "
             f"and has been flagged for manager review."
         )
 
     return jsonify(response), 201
 
 
+# =============================================================================
+# READ ENDPOINTS
+# =============================================================================
+
 @candidates_bp.route("/api/candidates", methods=["GET"])
 def list_candidates():
     """List all submitted candidates."""
     candidates = get_all_candidates()
-    return jsonify({
-        "candidates": candidates,
-        "total": len(candidates),
-    }), 200
+    return jsonify({"candidates": candidates, "total": len(candidates)}), 200
 
 
 @candidates_bp.route("/api/candidates/<candidate_id>", methods=["GET"])
@@ -301,45 +277,40 @@ def get_candidate(candidate_id):
 def audit_log():
     """Get the audit log."""
     log = get_audit_log()
-    return jsonify({
-        "log": log,
-        "total": len(log),
-    }), 200
+    return jsonify({"log": log, "total": len(log)}), 200
 
 
 @candidates_bp.route("/api/dashboard", methods=["GET"])
 def dashboard():
-    """Get dashboard statistics including intelligence summary."""
+    """Get dashboard statistics."""
     stats = get_dashboard_stats()
     return jsonify(stats), 200
 
+
+# =============================================================================
+# EXPORT
+# =============================================================================
 
 @candidates_bp.route("/api/export/csv", methods=["GET"])
 def export_csv():
     """Export all candidates as CSV."""
     candidates = get_all_candidates()
-
     fields = [
         "id", "full_name", "email", "phone", "date_of_birth",
         "aadhaar", "education_path", "risk_score", "category",
         "data_quality_score", "experience_bucket", "completeness_pct",
         "flagged_for_review", "submitted_at",
     ]
-
     output = io.StringIO()
-    writer = csv.DictWriter(
-        output, fieldnames=fields, extrasaction="ignore", quoting=csv.QUOTE_ALL,
-    )
+    writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore", quoting=csv.QUOTE_ALL)
     writer.writeheader()
     for c in candidates:
         row = {f: c.get(f, "") for f in fields}
         row["flagged_for_review"] = "Yes" if c.get("flagged_for_review") else "No"
         writer.writerow(row)
-
     output.seek(0)
     return Response(
-        output.getvalue(),
-        mimetype="text/csv",
+        output.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=admitguard_v2_export.csv"},
     )
 
@@ -350,7 +321,43 @@ def export_json():
     candidates = get_all_candidates()
     payload = _json.dumps(candidates, indent=2, ensure_ascii=False)
     return Response(
-        payload,
-        mimetype="application/json",
+        payload, mimetype="application/json",
         headers={"Content-Disposition": "attachment; filename=admitguard_v2_export.json"},
     )
+
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+def _compute_completeness(data, education_entries, work_entries):
+    """Compute data completeness percentage (0-100)."""
+    total_fields = 0
+    filled_fields = 0
+
+    # Core fields
+    core = ["full_name", "email", "phone", "date_of_birth", "aadhaar", "education_path"]
+    for f in core:
+        total_fields += 1
+        if data.get(f):
+            filled_fields += 1
+
+    # Education entries
+    edu_fields = ["level", "board_university", "year_of_passing", "score"]
+    for entry in education_entries:
+        for f in edu_fields:
+            total_fields += 1
+            if entry.get(f):
+                filled_fields += 1
+
+    # Work entries
+    work_fields = ["company_name", "designation", "domain", "start_date"]
+    for entry in work_entries:
+        for f in work_fields:
+            total_fields += 1
+            if entry.get(f):
+                filled_fields += 1
+
+    if total_fields == 0:
+        return 0
+    return round((filled_fields / total_fields) * 100, 1)

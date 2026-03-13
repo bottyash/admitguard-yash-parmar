@@ -1,329 +1,198 @@
 """
-AdmitGuard — Soft Rule Validators
-Sprint 2: Validates fields that CAN be overridden with a rationale.
+AdmitGuard v2 — Tier 2: SOFT FLAG Validators
+If Tier 2 rules fail, data IS saved but the candidate is flagged for review.
+These are concerns, not blockers.
 
-Each validator returns:
-{
-    "valid": bool,           # Whether the value passes the rule
-    "error": str|None,       # Error message if invalid
-    "rule_type": "soft",     # Always "soft" for these validators
-    "exception_allowed": bool # Whether this rule can be overridden
-}
-
-If the field fails validation but exception is enabled with valid rationale,
-the submission is still allowed.
+Checks: education gaps, backlogs, career gaps, domain transitions,
+        no work after education, scores below threshold.
 """
 
-import re
-import sys
-import os
-from datetime import datetime, date
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import rules_config as config
+import rules_config
 
 
-def validate_date_of_birth(dob_str):
+def validate_all_soft(candidate_data, education_result=None, work_result=None,
+                      cohort_rules=None):
     """
-    Validate Date of Birth: age must be between 18 and 35 at program start.
-    Soft rule — exception with rationale allowed.
+    Run all Tier 2 (soft flag) checks.
+
+    Args:
+        candidate_data: dict of candidate fields
+        education_result: output from validate_all_education()
+        work_result: output from validate_all_work()
+        cohort_rules: dict from get_effective_rules()
+
+    Returns: list of flag dicts: [{"type": str, "field": str, "message": str, "severity": str}]
     """
-    if not dob_str or not dob_str.strip():
-        return {
-            "valid": False,
-            "error": "Date of Birth is required.",
-            "rule_type": "soft",
-            "exception_allowed": config.RULE_AGE_EXCEPTION_ALLOWED,
-        }
+    rules = cohort_rules or {}
+    flags = []
 
-    dob_str = dob_str.strip()
+    # --- Education gap ---
+    if education_result:
+        max_gap = rules.get(
+            "max_education_gap_months",
+            rules_config.RULE_MAX_EDUCATION_GAP_MONTHS
+        )
+        total_gap = education_result.get("total_gap_months", 0)
+        if total_gap > max_gap:
+            flags.append({
+                "type": "EDUCATION_GAP",
+                "field": "education",
+                "message": f"Total education gap ({total_gap} months) exceeds threshold ({max_gap} months).",
+                "severity": "warning",
+            })
 
-    try:
-        dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
-    except ValueError:
-        return {
-            "valid": False,
-            "error": "Date of Birth must be in YYYY-MM-DD format.",
-            "rule_type": "soft",
-            "exception_allowed": False,  # format error is strict
-        }
+        # --- Backlogs ---
+        total_backlogs = education_result.get("total_backlogs", 0)
+        if rules_config.RULE_FLAG_ON_BACKLOGS and total_backlogs > 0:
+            flags.append({
+                "type": "BACKLOGS",
+                "field": "education",
+                "message": f"Candidate has {total_backlogs} backlog(s).",
+                "severity": "warning" if total_backlogs <= 3 else "high",
+            })
 
-    if not config.RULE_AGE_CHECK_ENABLED:
-        return {"valid": True, "error": None, "rule_type": "soft", "exception_allowed": False}
+        # --- Score below threshold ---
+        score_threshold = rules.get(
+            "score_threshold_percentage",
+            rules_config.RULE_SCORE_THRESHOLD_PERCENTAGE
+        )
+        for entry in education_result.get("entries", []):
+            normalized = entry.get("normalized_score", 0)
+            level = entry.get("level", "")
+            if normalized > 0 and normalized < score_threshold:
+                flags.append({
+                    "type": "LOW_SCORE",
+                    "field": f"education.{level}",
+                    "message": f"{level} score ({normalized}%) is below threshold ({score_threshold}%).",
+                    "severity": "warning",
+                })
 
-    today = date.today()
-    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    # --- Career gaps ---
+    if work_result:
+        derived = work_result.get("derived", {})
+        max_career_gap = rules.get(
+            "max_career_gap_months",
+            rules_config.RULE_MAX_CAREER_GAP_MONTHS
+        )
 
-    if age < config.RULE_AGE_MIN:
-        return {
-            "valid": False,
-            "error": f"Candidate must be at least {config.RULE_AGE_MIN} years old. Current age: {age}.",
-            "rule_type": "soft",
-            "exception_allowed": config.RULE_AGE_EXCEPTION_ALLOWED,
-        }
+        for gap in derived.get("career_gaps", []):
+            if gap["gap_months"] > max_career_gap:
+                flags.append({
+                    "type": "CAREER_GAP",
+                    "field": "work",
+                    "message": (
+                        f"Career gap of {gap['gap_months']} months "
+                        f"({gap['from_date']} to {gap['to_date']}) "
+                        f"exceeds threshold ({max_career_gap} months)."
+                    ),
+                    "severity": "warning",
+                })
 
-    if age > config.RULE_AGE_MAX:
-        return {
-            "valid": False,
-            "error": f"Candidate must be at most {config.RULE_AGE_MAX} years old. Current age: {age}.",
-            "rule_type": "soft",
-            "exception_allowed": config.RULE_AGE_EXCEPTION_ALLOWED,
-        }
+        # --- Domain transitions ---
+        max_transitions = rules.get(
+            "max_domain_transitions",
+            rules_config.RULE_MAX_DOMAIN_TRANSITIONS
+        )
+        transitions = derived.get("domain_transitions", 0)
+        if transitions > max_transitions:
+            flags.append({
+                "type": "DOMAIN_TRANSITIONS",
+                "field": "work",
+                "message": f"{transitions} domain transitions (threshold: {max_transitions}). May indicate career instability.",
+                "severity": "warning",
+            })
 
-    return {"valid": True, "error": None, "rule_type": "soft", "exception_allowed": False}
+    # --- No work after education ---
+    if education_result and (not work_result or not work_result.get("entries")):
+        from datetime import datetime
+        max_years = rules.get(
+            "years_since_education_no_work",
+            rules_config.RULE_YEARS_SINCE_EDUCATION_NO_WORK
+        )
 
+        # Find most recent education year
+        latest_year = 0
+        for entry in education_result.get("entries", []):
+            yr = entry.get("year_of_passing")
+            if yr and int(yr) > latest_year:
+                latest_year = int(yr)
 
-def validate_graduation_year(year_str):
-    """
-    Validate Graduation Year: must be between 2015 and 2025.
-    Soft rule — exception with rationale allowed.
-    """
-    if not year_str and year_str != 0:
-        return {
-            "valid": False,
-            "error": "Graduation Year is required.",
-            "rule_type": "soft",
-            "exception_allowed": config.RULE_GRAD_YEAR_EXCEPTION_ALLOWED,
-        }
+        if latest_year > 0:
+            years_since = datetime.now().year - latest_year
+            if years_since > max_years:
+                flags.append({
+                    "type": "NO_WORK_AFTER_EDUCATION",
+                    "field": "work",
+                    "message": (
+                        f"{years_since} years since last education with no work experience. "
+                        f"Threshold: {max_years} years."
+                    ),
+                    "severity": "high",
+                })
 
-    try:
-        year = int(year_str)
-    except (ValueError, TypeError):
-        return {
-            "valid": False,
-            "error": "Graduation Year must be a valid number.",
-            "rule_type": "soft",
-            "exception_allowed": False,
-        }
-
-    if not config.RULE_GRAD_YEAR_CHECK_ENABLED:
-        return {"valid": True, "error": None, "rule_type": "soft", "exception_allowed": False}
-
-    if year < config.RULE_GRAD_YEAR_MIN or year > config.RULE_GRAD_YEAR_MAX:
-        return {
-            "valid": False,
-            "error": f"Graduation Year must be between {config.RULE_GRAD_YEAR_MIN} and {config.RULE_GRAD_YEAR_MAX}. Got: {year}.",
-            "rule_type": "soft",
-            "exception_allowed": config.RULE_GRAD_YEAR_EXCEPTION_ALLOWED,
-        }
-
-    return {"valid": True, "error": None, "rule_type": "soft", "exception_allowed": False}
-
-
-def validate_percentage_cgpa(value_str, score_type="percentage"):
-    """
-    Validate Percentage/CGPA:
-    - If percentage: ≥60%
-    - If CGPA (10-point scale): ≥6.0
-    Soft rule — exception with rationale allowed.
-    """
-    if not value_str and value_str != 0:
-        return {
-            "valid": False,
-            "error": "Percentage/CGPA is required.",
-            "rule_type": "soft",
-            "exception_allowed": config.RULE_SCORE_EXCEPTION_ALLOWED,
-        }
-
-    try:
-        value = float(value_str)
-    except (ValueError, TypeError):
-        return {
-            "valid": False,
-            "error": "Percentage/CGPA must be a valid number.",
-            "rule_type": "soft",
-            "exception_allowed": False,
-        }
-
-    if not config.RULE_SCORE_CHECK_ENABLED:
-        return {"valid": True, "error": None, "rule_type": "soft", "exception_allowed": False}
-
-    score_type = (score_type or "percentage").strip().lower()
-
-    if score_type == "cgpa":
-        if value < 0 or value > config.RULE_CGPA_SCALE:
-            return {
-                "valid": False,
-                "error": f"CGPA must be between 0 and {config.RULE_CGPA_SCALE}.",
-                "rule_type": "soft",
-                "exception_allowed": False,
-            }
-        if value < config.RULE_CGPA_MIN:
-            return {
-                "valid": False,
-                "error": f"CGPA must be at least {config.RULE_CGPA_MIN}. Got: {value}.",
-                "rule_type": "soft",
-                "exception_allowed": config.RULE_SCORE_EXCEPTION_ALLOWED,
-            }
-    else:  # percentage
-        if value < 0 or value > 100:
-            return {
-                "valid": False,
-                "error": "Percentage must be between 0 and 100.",
-                "rule_type": "soft",
-                "exception_allowed": False,
-            }
-        if value < config.RULE_PERCENTAGE_MIN:
-            return {
-                "valid": False,
-                "error": f"Percentage must be at least {config.RULE_PERCENTAGE_MIN}%. Got: {value}%.",
-                "rule_type": "soft",
-                "exception_allowed": config.RULE_SCORE_EXCEPTION_ALLOWED,
-            }
-
-    return {"valid": True, "error": None, "rule_type": "soft", "exception_allowed": False}
+    return flags
 
 
-def validate_screening_score(score_str):
-    """
-    Validate Screening Test Score: ≥40 out of 100.
-    Soft rule — exception with rationale allowed.
-    """
-    if not score_str and score_str != 0:
-        return {
-            "valid": False,
-            "error": "Screening Test Score is required.",
-            "rule_type": "soft",
-            "exception_allowed": config.RULE_SCREENING_EXCEPTION_ALLOWED,
-        }
+def is_flagged_for_review(flags):
+    """Return True if flags warrant manual review."""
+    if not flags:
+        return False
+    # Any flag = review needed
+    return len(flags) > 0
 
-    try:
-        score = float(score_str)
-    except (ValueError, TypeError):
-        return {
-            "valid": False,
-            "error": "Screening Test Score must be a valid number.",
-            "rule_type": "soft",
-            "exception_allowed": False,
-        }
 
-    if not config.RULE_SCREENING_CHECK_ENABLED:
-        return {"valid": True, "error": None, "rule_type": "soft", "exception_allowed": False}
+def count_flags_by_severity(flags):
+    """Count flags by severity level."""
+    counts = {"warning": 0, "high": 0}
+    for f in flags:
+        severity = f.get("severity", "warning")
+        counts[severity] = counts.get(severity, 0) + 1
+    return counts
 
-    if score < 0 or score > config.RULE_SCREENING_SCORE_MAX:
-        return {
-            "valid": False,
-            "error": f"Screening Test Score must be between 0 and {config.RULE_SCREENING_SCORE_MAX}.",
-            "rule_type": "soft",
-            "exception_allowed": False,
-        }
 
-    if score < config.RULE_SCREENING_SCORE_MIN:
-        return {
-            "valid": False,
-            "error": f"Screening Test Score must be at least {config.RULE_SCREENING_SCORE_MIN}. Got: {score}.",
-            "rule_type": "soft",
-            "exception_allowed": config.RULE_SCREENING_EXCEPTION_ALLOWED,
-        }
+# =============================================================================
+# Legacy compatibility functions (used by old routes, will be removed later)
+# =============================================================================
 
-    return {"valid": True, "error": None, "rule_type": "soft", "exception_allowed": False}
+def count_exceptions(soft_results):
+    """Legacy: count exceptions from old-style soft_results dict."""
+    if isinstance(soft_results, list):
+        return len(soft_results)
+    count = 0
+    for field, result in soft_results.items():
+        if isinstance(result, dict) and result.get("exception_applied"):
+            count += 1
+    return count
+
+
+def validate_date_of_birth(dob):
+    """Legacy stub — handled by strict_validators.validate_age."""
+    return {"valid": True, "error": None, "exception_allowed": False}
+
+
+def validate_graduation_year(year):
+    """Legacy stub — handled by education_validators."""
+    return {"valid": True, "error": None, "exception_allowed": False}
+
+
+def validate_percentage_cgpa(score, score_type="percentage"):
+    """Legacy stub — handled by education_validators."""
+    return {"valid": True, "error": None, "exception_allowed": False}
+
+
+def validate_screening_score(score):
+    """Legacy stub — handled by Tier 2 in v2."""
+    return {"valid": True, "error": None, "exception_allowed": False}
 
 
 def validate_rationale(rationale):
-    """
-    Validate exception rationale:
-    - Minimum 30 characters
-    - Must contain at least one required keyword
-    """
-    if not rationale or not rationale.strip():
+    """Legacy: validate exception rationale."""
+    rationale = (rationale or "").strip()
+    if not rationale:
+        return {"valid": False, "error": "Rationale is required for exceptions."}
+    if len(rationale) < rules_config.RULE_RATIONALE_MIN_LENGTH:
         return {
             "valid": False,
-            "error": "Rationale is required when requesting an exception.",
+            "error": f"Rationale must be at least {rules_config.RULE_RATIONALE_MIN_LENGTH} characters.",
         }
-
-    rationale = rationale.strip()
-
-    if len(rationale) < config.RULE_RATIONALE_MIN_LENGTH:
-        return {
-            "valid": False,
-            "error": f"Rationale must be at least {config.RULE_RATIONALE_MIN_LENGTH} characters. Currently: {len(rationale)}.",
-        }
-
-    # Check for at least one required keyword (case-insensitive)
-    rationale_lower = rationale.lower()
-    has_keyword = any(
-        keyword.lower() in rationale_lower
-        for keyword in config.RULE_RATIONALE_REQUIRED_KEYWORDS
-    )
-
-    if not has_keyword:
-        keywords = '", "'.join(config.RULE_RATIONALE_REQUIRED_KEYWORDS)
-        return {
-            "valid": False,
-            "error": f'Rationale must include at least one keyword: "{keywords}".',
-        }
-
     return {"valid": True, "error": None}
-
-
-def validate_all_soft(data, exceptions=None):
-    """
-    Run all soft validations on candidate data.
-    
-    Args:
-        data: candidate fields dict
-        exceptions: dict of field_name -> {"enabled": bool, "rationale": str}
-    
-    Returns dict of field -> {
-        "valid": bool,
-        "error": str|None,
-        "rule_type": "soft",
-        "exception_allowed": bool,
-        "exception_applied": bool,
-        "rationale_valid": bool|None,
-        "rationale_error": str|None,
-    }
-    """
-    exceptions = exceptions or {}
-    results = {}
-
-    # Define soft field validators
-    soft_checks = {
-        "date_of_birth": lambda: validate_date_of_birth(data.get("date_of_birth", "")),
-        "graduation_year": lambda: validate_graduation_year(data.get("graduation_year", "")),
-        "percentage_cgpa": lambda: validate_percentage_cgpa(
-            data.get("percentage_cgpa", ""),
-            data.get("score_type", "percentage"),
-        ),
-        "screening_test_score": lambda: validate_screening_score(
-            data.get("screening_test_score", "")
-        ),
-    }
-
-    for field_name, validator in soft_checks.items():
-        result = validator()
-
-        # If field fails and exception is enabled, validate the rationale
-        exception_info = exceptions.get(field_name, {})
-        exception_enabled = exception_info.get("enabled", False)
-
-        result["exception_applied"] = False
-        result["rationale_valid"] = None
-        result["rationale_error"] = None
-
-        if not result["valid"] and result.get("exception_allowed") and exception_enabled:
-            rationale = exception_info.get("rationale", "")
-            rationale_result = validate_rationale(rationale)
-
-            result["rationale_valid"] = rationale_result["valid"]
-            result["rationale_error"] = rationale_result.get("error")
-
-            if rationale_result["valid"]:
-                # Exception accepted — mark as valid with exception
-                result["exception_applied"] = True
-                result["valid"] = True
-                result["error"] = None
-
-        results[field_name] = result
-
-    return results
-
-
-def count_exceptions(soft_results):
-    """Count how many exceptions were applied."""
-    return sum(1 for r in soft_results.values() if r.get("exception_applied"))
-
-
-def is_flagged_for_review(exception_count):
-    """Check if the candidate should be flagged for manager review."""
-    return exception_count > config.RULE_MAX_EXCEPTIONS_BEFORE_FLAG

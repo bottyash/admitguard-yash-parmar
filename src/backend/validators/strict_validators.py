@@ -1,203 +1,160 @@
 """
-AdmitGuard — Strict Rule Validators
-Sprint 1: Validates fields that have NO exception override.
+AdmitGuard v2 — Tier 1: HARD REJECT Validators
+If any Tier 1 rule fails, the submission is rejected outright.
+Data is NOT saved to the database.
 
-Each validator function reads its rules from rules_config flags
-and returns a dict: {"valid": bool, "error": str|None}
+Checks: mandatory fields, format validation, duplicates, age, score ranges.
 """
 
 import re
-import sys
-import os
+from datetime import datetime, date
+import rules_config
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import rules_config as config
 
+def validate_all_strict(data, existing_emails=None, existing_phones=None,
+                        cohort_rules=None):
+    """
+    Run all Tier 1 (hard reject) validations on candidate data.
+    cohort_rules: dict from get_effective_rules() — uses defaults if None.
+
+    Returns: dict of {field: {"valid": bool, "error": str|None}}
+    """
+    existing_emails = existing_emails or []
+    existing_phones = existing_phones or []
+    rules = cohort_rules or {}
+
+    results = {}
+
+    results["full_name"] = validate_full_name(data.get("full_name", ""))
+    results["email"] = validate_email(data.get("email", ""), existing_emails)
+    results["phone"] = validate_phone(
+        data.get("phone", ""), existing_phones
+    )
+    results["date_of_birth"] = validate_age(
+        data.get("date_of_birth", ""),
+        min_age=rules.get("age_minimum", rules_config.RULE_AGE_MINIMUM)
+    )
+    results["aadhaar"] = validate_aadhaar(data.get("aadhaar", ""))
+
+    # Check mandatory fields
+    for field in rules_config.MANDATORY_FIELDS:
+        if field not in results:
+            value = data.get(field, "")
+            if not value or not str(value).strip():
+                results[field] = {
+                    "valid": False,
+                    "error": f"{field.replace('_', ' ').title()} is required.",
+                }
+
+    return results
+
+
+# =============================================================================
+# Individual validators
+# =============================================================================
 
 def validate_full_name(name):
-    """Validate full name: required, min length, no numbers."""
-    if not name or not name.strip():
-        if config.RULE_NAME_REQUIRED:
-            return {"valid": False, "error": "Full Name is required."}
-
-    name = name.strip()
-
-    if config.RULE_NAME_MIN_LENGTH and len(name) < config.RULE_NAME_MIN_LENGTH:
-        return {
-            "valid": False,
-            "error": f"Full Name must be at least {config.RULE_NAME_MIN_LENGTH} characters."
-        }
-
-    if config.RULE_NAME_NO_NUMBERS and re.search(r'\d', name):
-        return {"valid": False, "error": "Full Name must not contain numbers."}
-
+    """Name must be ≥2 chars, no numbers."""
+    name = (name or "").strip()
+    if not name:
+        return {"valid": False, "error": "Full name is required."}
+    if len(name) < rules_config.RULE_NAME_MIN_LENGTH:
+        return {"valid": False, "error": f"Name must be at least {rules_config.RULE_NAME_MIN_LENGTH} characters."}
+    if rules_config.RULE_NAME_NO_NUMBERS and re.search(r'\d', name):
+        return {"valid": False, "error": "Name must not contain numbers."}
     return {"valid": True, "error": None}
 
 
 def validate_email(email, existing_emails=None):
-    """Validate email: required, valid format, unique."""
-    if not email or not email.strip():
-        if config.RULE_EMAIL_REQUIRED:
-            return {"valid": False, "error": "Email is required."}
+    """Valid email format + unique."""
+    email = (email or "").strip().lower()
+    if not email:
+        return {"valid": False, "error": "Email is required."}
 
-    email = email.strip().lower()
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(pattern, email):
+        return {"valid": False, "error": "Invalid email format."}
 
-    # Basic email format validation
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    if not re.match(email_pattern, email):
-        return {"valid": False, "error": "Please enter a valid email address."}
-
-    # Uniqueness check
-    if config.RULE_EMAIL_UNIQUE and existing_emails:
+    if rules_config.RULE_DUPLICATE_EMAIL and existing_emails:
         if email in [e.lower() for e in existing_emails]:
             return {"valid": False, "error": "This email is already registered."}
 
     return {"valid": True, "error": None}
 
 
-def validate_phone(phone):
-    """Validate phone: 10-digit Indian number starting with 6/7/8/9."""
-    if not phone or not phone.strip():
-        if config.RULE_PHONE_REQUIRED:
-            return {"valid": False, "error": "Phone number is required."}
+def validate_phone(phone, existing_phones=None):
+    """Indian phone: 10 digits, starts with 6-9."""
+    phone = (phone or "").strip()
+    phone_digits = re.sub(r'[^0-9]', '', phone)
 
-    phone = phone.strip()
+    if not phone_digits:
+        return {"valid": False, "error": "Phone number is required."}
 
-    # Remove any spaces or dashes
-    phone_clean = re.sub(r'[\s\-]', '', phone)
+    if len(phone_digits) != rules_config.RULE_PHONE_LENGTH:
+        return {"valid": False, "error": f"Phone must be exactly {rules_config.RULE_PHONE_LENGTH} digits."}
 
-    if not phone_clean.isdigit():
-        return {"valid": False, "error": "Phone number must contain only digits."}
+    if int(phone_digits[0]) not in rules_config.RULE_PHONE_VALID_START_DIGITS:
+        return {"valid": False, "error": "Indian phone must start with 6, 7, 8, or 9."}
 
-    if config.RULE_PHONE_LENGTH and len(phone_clean) != config.RULE_PHONE_LENGTH:
-        return {
-            "valid": False,
-            "error": f"Phone number must be exactly {config.RULE_PHONE_LENGTH} digits."
-        }
-
-    if config.RULE_PHONE_VALID_START_DIGITS:
-        first_digit = int(phone_clean[0])
-        if first_digit not in config.RULE_PHONE_VALID_START_DIGITS:
-            valid_starts = ', '.join(str(d) for d in config.RULE_PHONE_VALID_START_DIGITS)
-            return {
-                "valid": False,
-                "error": f"Phone number must start with {valid_starts}."
-            }
+    if rules_config.RULE_DUPLICATE_PHONE and existing_phones:
+        if phone_digits in [re.sub(r'[^0-9]', '', p) for p in existing_phones]:
+            return {"valid": False, "error": "This phone number is already registered."}
 
     return {"valid": True, "error": None}
 
 
-def validate_qualification(qualification):
-    """Validate highest qualification: must be from allowed list."""
-    if not qualification or not qualification.strip():
-        if config.RULE_QUALIFICATION_REQUIRED:
-            return {"valid": False, "error": "Highest Qualification is required."}
+def validate_age(dob_str, min_age=None):
+    """Date of birth must make candidate at least min_age years old."""
+    if min_age is None:
+        min_age = rules_config.RULE_AGE_MINIMUM
 
-    qualification = qualification.strip()
+    dob_str = (dob_str or "").strip()
+    if not dob_str:
+        return {"valid": False, "error": "Date of birth is required."}
 
-    if config.RULE_QUALIFICATION_ALLOWED_VALUES:
-        if qualification not in config.RULE_QUALIFICATION_ALLOWED_VALUES:
-            allowed = ', '.join(config.RULE_QUALIFICATION_ALLOWED_VALUES)
-            return {
-                "valid": False,
-                "error": f"Qualification must be one of: {allowed}."
-            }
+    try:
+        dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
+    except ValueError:
+        return {"valid": False, "error": "Invalid date format. Use YYYY-MM-DD."}
 
-    return {"valid": True, "error": None}
+    today = date.today()
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
+    if age < min_age:
+        return {"valid": False, "error": f"Candidate must be at least {min_age} years old."}
 
-def validate_interview_status(status):
-    """Validate interview status: must be valid value, blocked if Rejected."""
-    if not status or not status.strip():
-        if config.RULE_INTERVIEW_STATUS_REQUIRED:
-            return {"valid": False, "error": "Interview Status is required."}
-
-    status = status.strip()
-
-    if config.RULE_INTERVIEW_VALID_VALUES:
-        if status not in config.RULE_INTERVIEW_VALID_VALUES:
-            valid = ', '.join(config.RULE_INTERVIEW_VALID_VALUES)
-            return {
-                "valid": False,
-                "error": f"Interview Status must be one of: {valid}."
-            }
-
-    if config.RULE_INTERVIEW_BLOCK_ON_REJECTED and status == "Rejected":
-        return {
-            "valid": False,
-            "error": "Candidate with 'Rejected' interview status cannot be submitted."
-        }
+    if dob > today:
+        return {"valid": False, "error": "Date of birth cannot be in the future."}
 
     return {"valid": True, "error": None}
 
 
 def validate_aadhaar(aadhaar):
-    """Validate Aadhaar: exactly 12 digits, no alphabets."""
-    if not aadhaar or not aadhaar.strip():
-        if config.RULE_AADHAAR_REQUIRED:
-            return {"valid": False, "error": "Aadhaar Number is required."}
+    """Aadhaar must be exactly 12 digits."""
+    aadhaar = (aadhaar or "").strip()
+    if not aadhaar:
+        return {"valid": False, "error": "Aadhaar number is required."}
 
-    aadhaar = aadhaar.strip()
+    aadhaar_digits = re.sub(r'[^0-9]', '', aadhaar)
 
-    if config.RULE_AADHAAR_DIGITS_ONLY and not aadhaar.isdigit():
-        return {"valid": False, "error": "Aadhaar Number must contain only digits."}
+    if len(aadhaar_digits) != rules_config.RULE_AADHAAR_LENGTH:
+        return {"valid": False, "error": f"Aadhaar must be exactly {rules_config.RULE_AADHAAR_LENGTH} digits."}
 
-    if config.RULE_AADHAAR_LENGTH and len(aadhaar) != config.RULE_AADHAAR_LENGTH:
-        return {
-            "valid": False,
-            "error": f"Aadhaar Number must be exactly {config.RULE_AADHAAR_LENGTH} digits."
-        }
+    if rules_config.RULE_AADHAAR_DIGITS_ONLY and not aadhaar_digits.isdigit():
+        return {"valid": False, "error": "Aadhaar must contain only digits."}
 
     return {"valid": True, "error": None}
 
 
-def validate_offer_letter(offer_letter, interview_status):
-    """Validate offer letter: Yes/No, and Yes requires Cleared/Waitlisted interview."""
-    if not offer_letter or not offer_letter.strip():
-        if config.RULE_OFFER_LETTER_REQUIRED:
-            return {"valid": False, "error": "Offer Letter Sent status is required."}
-
-    offer_letter = offer_letter.strip()
-
-    if config.RULE_OFFER_LETTER_VALID_VALUES:
-        if offer_letter not in config.RULE_OFFER_LETTER_VALID_VALUES:
-            valid = ', '.join(config.RULE_OFFER_LETTER_VALID_VALUES)
-            return {
-                "valid": False,
-                "error": f"Offer Letter Sent must be one of: {valid}."
-            }
-
-    if config.RULE_OFFER_LETTER_REQUIRES_CLEARED_OR_WAITLISTED:
-        if offer_letter == "Yes" and interview_status not in ["Cleared", "Waitlisted"]:
-            return {
-                "valid": False,
-                "error": "Offer Letter can only be 'Yes' if Interview Status is 'Cleared' or 'Waitlisted'."
-            }
-
+# Legacy compatibility — old routes may call these
+def validate_qualification(qual):
+    """Kept for backward compatibility. Always passes in v2 (handled by education_validators)."""
     return {"valid": True, "error": None}
 
+def validate_interview_status(status):
+    """Kept for backward compatibility."""
+    return {"valid": True, "error": None}
 
-def validate_all_strict(data, existing_emails=None):
-    """
-    Run all strict validations on candidate data.
-    Returns dict of field -> validation result.
-    """
-    results = {}
-
-    results["full_name"] = validate_full_name(data.get("full_name", ""))
-    results["email"] = validate_email(data.get("email", ""), existing_emails)
-    results["phone"] = validate_phone(data.get("phone", ""))
-    results["highest_qualification"] = validate_qualification(
-        data.get("highest_qualification", "")
-    )
-    results["interview_status"] = validate_interview_status(
-        data.get("interview_status", "")
-    )
-    results["aadhaar"] = validate_aadhaar(data.get("aadhaar", ""))
-    results["offer_letter_sent"] = validate_offer_letter(
-        data.get("offer_letter_sent", ""),
-        data.get("interview_status", "")
-    )
-
-    return results
+def validate_offer_letter(offer, interview_status=""):
+    """Kept for backward compatibility."""
+    return {"valid": True, "error": None}
