@@ -16,6 +16,7 @@ from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from routes.candidates import candidates_bp
 from routes.admin import admin_bp
+from routes.llm_routes import llm_bp
 from db import init_db
 
 # Resolve path to frontend directory (../frontend relative to backend/)
@@ -40,15 +41,19 @@ def create_app():
     # Register API blueprints
     app.register_blueprint(candidates_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(llm_bp)
 
     # Health check endpoint
     @app.route("/api/health", methods=["GET"])
     def health_check():
+        from intelligence import llm_assistant
         return jsonify({
             "status": "healthy",
             "version": "2.0.0",
             "sprint": "v2",
             "storage": "SQLite",
+            "llm_available": llm_assistant.is_available(),
+            "llm_model": llm_assistant.OLLAMA_MODEL,
             "description": "AdmitGuard v2: Enterprise Admission Validation Platform"
         }), 200
 

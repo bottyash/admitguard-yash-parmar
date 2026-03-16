@@ -9,6 +9,11 @@ import csv, io, json as _json
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from intelligence.risk_scorer import compute_risk_score
+from intelligence.categorizer import categorize
+from intelligence.data_quality import compute_data_quality
+from intelligence import llm_assistant
+
 from validators.strict_validators import validate_all_strict
 from validators.soft_validators import validate_all_soft, is_flagged_for_review
 from validators.education_validators import validate_all_education
@@ -205,17 +210,47 @@ def create_candidate():
     enriched_education = edu_result["entries"] if edu_result else education_entries
     enriched_work = work_result["entries"] if work_result else work_entries
 
-    # Compute intelligence placeholders (Phase 7 will replace with real scoring)
+    # Compute intelligence
     work_derived = work_result.get("derived", {}) if work_result else {}
+    completeness = _compute_completeness(data, education_entries, work_entries)
+
+    # Risk scoring (7-factor weighted 0-100)
+    risk_result = compute_risk_score(
+        education_result=edu_result,
+        work_result=work_result,
+        completeness_pct=completeness,
+    )
+    risk_score = risk_result["risk_score"]
+
+    # Auto-categorization
+    cat_result = categorize(risk_score)
+    category = cat_result["category"]
+
+    # Data quality
+    dq_result = compute_data_quality(data, education_entries, work_entries, tier2_flags)
+
+    # Anomaly narration via LLM (graceful fallback)
+    narration = llm_assistant.narrate_flags(data, tier2_flags, risk_score, category)
+
+    # LLM verification flags (async-safe: won't block if Ollama is down)
+    llm_flags = []
+    if education_entries and llm_assistant.is_available():
+        try:
+            consistency = llm_assistant.verify_education_consistency(education_entries)
+            if not consistency.get("consistent", True):
+                for flag_msg in consistency.get("flags", []):
+                    llm_flags.append({"type": "LLM_EDUCATION", "message": flag_msg})
+        except Exception:
+            pass  # Never let LLM break submission
 
     intelligence = {
-        "risk_score": 0,  # Will be computed in Phase 7
-        "category": "Pending",
-        "data_quality_score": 0,
+        "risk_score": risk_score,
+        "category": category,
+        "data_quality_score": dq_result["score"],
         "experience_bucket": work_derived.get("experience_bucket", "Fresher"),
-        "completeness_pct": _compute_completeness(data, education_entries, work_entries),
-        "anomaly_narration": "",
-        "flagged_for_review": flagged,
+        "completeness_pct": completeness,
+        "anomaly_narration": narration,
+        "flagged_for_review": flagged or risk_score > 60,
     }
 
     # ================================================================
@@ -227,6 +262,7 @@ def create_candidate():
         work_entries=enriched_work,
         intelligence=intelligence,
         flags=tier2_flags,
+        llm_flags=llm_flags,
     )
 
     response = {
@@ -235,19 +271,23 @@ def create_candidate():
         "message": "Candidate submitted successfully.",
         "candidate": candidate,
         "tier2_flags": tier2_flags,
-        "enrichment": {
+        "llm_flags": llm_flags,
+        "intelligence": {
+            "risk_score": risk_score,
+            "risk_breakdown": risk_result["breakdown"],
+            "category": category,
+            "category_confidence": cat_result["confidence"],
+            "data_quality": dq_result,
             "experience_bucket": work_derived.get("experience_bucket", "Fresher"),
-            "total_experience_months": work_derived.get("total_experience_months", 0),
-            "total_education_gap_months": edu_result.get("total_gap_months", 0) if edu_result else 0,
-            "total_backlogs": edu_result.get("total_backlogs", 0) if edu_result else 0,
+            "anomaly_narration": narration,
         },
-        "flagged_for_review": flagged,
+        "flagged_for_review": intelligence["flagged_for_review"],
     }
 
-    if flagged:
+    if intelligence["flagged_for_review"]:
         response["warning"] = (
-            f"⚠️ This entry has {len(tier2_flags)} flag(s) "
-            f"and has been flagged for manager review."
+            f"⚠️ Risk score {risk_score}/100 ({category}). "
+            f"{len(tier2_flags)} flag(s) — flagged for review."
         )
 
     return jsonify(response), 201
