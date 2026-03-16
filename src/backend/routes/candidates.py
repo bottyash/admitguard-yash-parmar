@@ -13,6 +13,7 @@ from intelligence.risk_scorer import compute_risk_score
 from intelligence.categorizer import categorize
 from intelligence.data_quality import compute_data_quality
 from intelligence import llm_assistant
+from services import google_sheets
 
 from validators.strict_validators import validate_all_strict
 from validators.soft_validators import validate_all_soft, is_flagged_for_review
@@ -264,6 +265,14 @@ def create_candidate():
         flags=tier2_flags,
         llm_flags=llm_flags,
     )
+
+    # ================================================================
+    # GOOGLE SHEETS SYNC (fire-and-forget, never blocks submission)
+    # ================================================================
+    try:
+        google_sheets.sync_candidate(candidate, enriched_education, enriched_work)
+    except Exception:
+        pass  # Never let Sheets sync break submission
 
     response = {
         "success": True,
