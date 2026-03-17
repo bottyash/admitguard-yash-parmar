@@ -1,616 +1,668 @@
 /**
- * AdmitGuard — Frontend Application
- * Sprint 3: Zero client-side validation. All validation via backend API.
- *
- * API Base: http://localhost:5000
+ * AdmitGuard v2 — Frontend Application
+ * Multi-step form, dynamic education/work entries, real-time validation,
+ * LLM chat, and risk score visualization.
  */
 
-const API_BASE = "http://localhost:5000";
+const API = '';
+let currentStep = 1;
+let educationPath = 'A';
+let educationEntries = [];
+let workEntries = [];
+let submissionResult = null;
 
-// =============================================================================
-// State
-// =============================================================================
-const state = {
-    exceptions: {},          // { fieldName: { enabled: bool, rationale: string } }
-    exceptionCount: 0,
-    flaggedForReview: false,
-    scoreType: "percentage", // "percentage" | "cgpa"
-    validFields: new Set(),  // fields that have passed validation
-    invalidFields: new Set(),
-    isSubmitting: false,
-    auditFilter: "all",      // "all" | "flagged" | "exceptions"
+// ============================================================================
+// EDUCATION PATHWAY DEFINITIONS
+// ============================================================================
+const PATHS = {
+    A: { label: 'Standard', levels: ['10th', '12th', 'UG'] },
+    B: { label: 'Lateral Entry', levels: ['10th', 'Diploma', 'UG'] },
+    C: { label: 'Vocational', levels: ['10th', 'ITI', 'Diploma', 'UG'] },
 };
 
-// =============================================================================
-// API Helpers
-// =============================================================================
-async function apiGet(path) {
-    const res = await fetch(`${API_BASE}${path}`);
-    return res.json();
-}
+const BOARDS = ['CBSE', 'ICSE', 'State Board', 'NIOS', 'IB', 'Cambridge', 'Other'];
+const STREAMS = ['Science', 'Commerce', 'Arts/Humanities', 'Vocational', 'N/A'];
+const SCORE_SCALES = ['percentage', 'cgpa_10', 'cgpa_4'];
+const DOMAINS = ['IT', 'Non-IT', 'Government', 'Education', 'Healthcare', 'Finance', 'Startup', 'Other'];
+const EMP_TYPES = ['Full-time', 'Part-time', 'Internship', 'Contract', 'Freelance'];
 
-async function apiPost(path, body) {
-    const res = await fetch(`${API_BASE}${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    });
-    return { ok: res.ok, status: res.status, data: await res.json() };
-}
+// ============================================================================
+// STEP NAVIGATION
+// ============================================================================
+function goToStep(step) {
+    // Validate current step before proceeding
+    if (step > currentStep && !validateCurrentStep()) return;
 
-// =============================================================================
-// DOM Helpers
-// =============================================================================
-function $(id) { return document.getElementById(id); }
-function el(tag, attrs = {}, ...children) {
-    const e = document.createElement(tag);
-    Object.entries(attrs).forEach(([k, v]) => {
-        if (k === "class") e.className = v;
-        else if (k === "html") e.innerHTML = v;
-        else e.setAttribute(k, v);
-    });
-    children.forEach(c => typeof c === "string" ? e.append(c) : e.append(c));
-    return e;
-}
-
-// =============================================================================
-// Toast Notifications
-// =============================================================================
-function showToast(message, type = "success", duration = 3500) {
-    const icons = { success: "✅", error: "❌", warning: "⚠️" };
-    const container = $("toast-container");
-    const toast = el("div", { class: `toast ${type}` });
-    toast.innerHTML = `<span>${icons[type] || "ℹ️"}</span><span>${message}</span>`;
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), duration);
-}
-
-// =============================================================================
-// Field Validation (calls backend per-field)
-// =============================================================================
-function getFormData() {
-    return {
-        full_name: $("full_name")?.value || "",
-        email: $("email")?.value || "",
-        phone: $("phone")?.value || "",
-        date_of_birth: $("date_of_birth")?.value || "",
-        highest_qualification: $("highest_qualification")?.value || "",
-        graduation_year: $("graduation_year")?.value || "",
-        percentage_cgpa: $("percentage_cgpa")?.value || "",
-        score_type: state.scoreType,
-        screening_test_score: $("screening_test_score")?.value || "",
-        interview_status: $("interview_status")?.value || "",
-        aadhaar: $("aadhaar")?.value || "",
-        offer_letter_sent: $("offer_letter_sent")?.value || "",
-        exceptions: state.exceptions,
-    };
-}
-
-async function validateField(fieldName) {
-    const data = getFormData();
-    const inputEl = $(fieldName);
-    if (!inputEl) return;
-
-    // Show loading
-    setFieldState(fieldName, "loading");
-
-    try {
-        const { data: result } = await apiPost(`/api/validate/${fieldName}`, data);
-        applyFieldResult(fieldName, result);
-    } catch {
-        // If API unreachable, don't block user
-        setFieldState(fieldName, "idle");
-    }
-}
-
-function applyFieldResult(fieldName, result) {
-    const inputEl = $(fieldName);
-    if (!inputEl) return;
-
-    const msgEl = $(`${fieldName}-msg`);
-    const exPanel = $(`${fieldName}-exception`);
-
-    inputEl.classList.remove("is-valid", "is-invalid", "is-warning");
-
-    if (result.valid) {
-        inputEl.classList.add("is-valid");
-        state.validFields.add(fieldName);
-        state.invalidFields.delete(fieldName);
-        if (msgEl) { msgEl.className = "field-message success"; msgEl.textContent = ""; }
-        if (exPanel) exPanel.hidden = true;
-    } else {
-        state.validFields.delete(fieldName);
-        state.invalidFields.add(fieldName);
-
-        if (result.exception_allowed) {
-            // Soft rule failure — show exception panel
-            inputEl.classList.add("is-warning");
-            if (msgEl) {
-                msgEl.className = "field-message warning";
-                msgEl.innerHTML = `⚠️ ${result.error}`;
-            }
-            if (exPanel) exPanel.hidden = false;
-            updateExceptionCounter();
-        } else {
-            // Hard failure
-            inputEl.classList.add("is-invalid");
-            if (msgEl) {
-                msgEl.className = "field-message error";
-                msgEl.textContent = result.error || "Invalid value.";
-            }
-            if (exPanel) exPanel.hidden = true;
-        }
-    }
-}
-
-function setFieldState(fieldName, state) {
-    const inputEl = $(fieldName);
-    if (!inputEl) return;
-    if (state === "loading") {
-        inputEl.style.opacity = "0.7";
-    } else {
-        inputEl.style.opacity = "1";
-    }
-}
-
-// =============================================================================
-// Exception Panel Logic
-// =============================================================================
-function initExceptionPanel(fieldName) {
-    const toggleEl = $(`${fieldName}-exception-toggle`);
-    const rationaleEl = $(`${fieldName}-rationale`);
-    const rationalePanelEl = $(`${fieldName}-rationale-panel`);
-    const counterEl = $(`${fieldName}-rationale-counter`);
-
-    if (!toggleEl) return;
-
-    // Initialise state
-    if (!state.exceptions[fieldName]) {
-        state.exceptions[fieldName] = { enabled: false, rationale: "" };
+    // Hide all steps
+    for (let i = 1; i <= 5; i++) {
+        document.getElementById(`step-${i}`).classList.add('hidden');
     }
 
-    toggleEl.addEventListener("change", () => {
-        state.exceptions[fieldName].enabled = toggleEl.checked;
-        if (rationalePanelEl) rationalePanelEl.hidden = !toggleEl.checked;
+    // Show target step
+    document.getElementById(`step-${step}`).classList.remove('hidden');
 
-        // Re-validate field with new exception state
-        validateField(fieldName);
-        updateExceptionCounter();
+    // Update indicators
+    document.querySelectorAll('.step-dot').forEach(dot => {
+        const s = parseInt(dot.dataset.step);
+        dot.classList.remove('active', 'completed');
+        if (s === step) dot.classList.add('active');
+        else if (s < step) dot.classList.add('completed');
     });
 
-    if (rationaleEl) {
-        rationaleEl.addEventListener("input", () => {
-            const text = rationaleEl.value;
-            state.exceptions[fieldName].rationale = text;
+    currentStep = step;
 
-            // Update character counter
-            if (counterEl) {
-                counterEl.textContent = `${text.length}/30 chars minimum`;
-                counterEl.className = `rationale-counter ${text.length >= 30 ? "sufficient" : "insufficient"}`;
-            }
-        });
+    // Step-specific initialization
+    if (step === 2) renderEducationEntries();
+    if (step === 4) renderReview();
 
-        // Validate rationale on blur (re-validate whole field)
-        rationaleEl.addEventListener("blur", () => validateField(fieldName));
-    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-function updateExceptionCounter() {
-    const badge = $("exception-count-badge");
-    if (!badge) return;
-
-    const enabled = Object.values(state.exceptions).filter(e => e.enabled).length;
-    state.exceptionCount = enabled;
-
-    if (enabled === 0) {
-        badge.className = "exception-counter none";
-        badge.innerHTML = `✓ No exceptions`;
-    } else if (enabled <= 2) {
-        badge.className = "exception-counter some";
-        badge.innerHTML = `⚠️ ${enabled} exception${enabled > 1 ? "s" : ""} (requires manager notation)`;
-    } else {
-        badge.className = "exception-counter flagged";
-        badge.innerHTML = `🚨 ${enabled} exceptions — Will be flagged for manager review`;
-    }
+function validateCurrentStep() {
+    if (currentStep === 1) return validateStep1();
+    if (currentStep === 2) return validateStep2();
+    if (currentStep === 3) return validateStep3();
+    return true;
 }
 
-// =============================================================================
-// Score Type Toggle
-// =============================================================================
-function initScoreTypeToggle() {
-    const pctBtn = $("score-type-percentage");
-    const cgpaBtn = $("score-type-cgpa");
-    const label = $("score-label");
-    const hint = $("score-hint");
+// ============================================================================
+// STEP 1: PERSONAL INFO VALIDATION
+// ============================================================================
+function validateStep1() {
+    let valid = true;
+    const fields = ['full_name', 'email', 'phone', 'date_of_birth', 'aadhaar'];
 
-    if (!pctBtn || !cgpaBtn) return;
+    fields.forEach(field => {
+        const input = document.getElementById(field);
+        const err = document.getElementById(`err-${field}`);
+        const val = input.value.trim();
 
-    function setScoreType(type) {
-        state.scoreType = type;
-        pctBtn.classList.toggle("active", type === "percentage");
-        cgpaBtn.classList.toggle("active", type === "cgpa");
+        input.classList.remove('valid', 'invalid');
+        err.textContent = '';
 
-        if (label) label.textContent = type === "percentage" ? "Percentage (%)" : "CGPA (10-pt scale)";
-        if (hint) hint.textContent = type === "percentage" ? "Minimum 60%" : "Minimum 6.0 on 10-point scale";
-
-        // Re-validate the score field
-        if ($("percentage_cgpa")?.value) validateField("percentage_cgpa");
-    }
-
-    pctBtn.addEventListener("click", () => setScoreType("percentage"));
-    cgpaBtn.addEventListener("click", () => setScoreType("cgpa"));
-}
-
-// =============================================================================
-// Form Submit
-// =============================================================================
-async function handleSubmit(e) {
-    e.preventDefault();
-    if (state.isSubmitting) return;
-
-    state.isSubmitting = true;
-    const submitBtn = $("submit-btn");
-    const origHTML = submitBtn.innerHTML;
-    submitBtn.innerHTML = `<span class="spinner"></span> Validating…`;
-    submitBtn.disabled = true;
-
-    try {
-        const data = getFormData();
-
-        // Final full validation first
-        const { data: validation } = await apiPost("/api/validate", data);
-
-        if (!validation.valid) {
-            // Show errors
-            Object.entries(validation.errors || {}).forEach(([field, error]) => {
-                const inputEl = $(field);
-                if (inputEl) { inputEl.classList.add("is-invalid"); }
-                const msgEl = $(`${field}-msg`);
-                if (msgEl) {
-                    msgEl.className = "field-message error";
-                    msgEl.textContent = error;
-                }
-            });
-
-            Object.entries(validation.soft_errors || {}).forEach(([field, info]) => {
-                const inputEl = $(field);
-                if (inputEl) inputEl.classList.add("is-warning");
-                const exPanel = $(`${field}-exception`);
-                if (exPanel) exPanel.hidden = false;
-                const msgEl = $(`${field}-msg`);
-                if (msgEl) {
-                    msgEl.className = "field-message warning";
-                    msgEl.innerHTML = `⚠️ ${info.error}`;
-                }
-            });
-
-            showToast("Please fix validation errors before submitting.", "error");
+        if (!val) {
+            err.textContent = `${field.replace(/_/g, ' ')} is required.`;
+            input.classList.add('invalid');
+            valid = false;
             return;
         }
 
-        // Submit candidate
-        submitBtn.innerHTML = `<span class="spinner"></span> Submitting…`;
-        const { ok, data: result } = await apiPost("/api/candidates", data);
-
-        if (ok && result.success) {
-            showSuccessModal(result, data);
-            resetForm();
+        // Field-specific checks
+        if (field === 'full_name' && val.length < 2) {
+            err.textContent = 'Name must be at least 2 characters.';
+            input.classList.add('invalid'); valid = false;
+        } else if (field === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+            err.textContent = 'Invalid email format.';
+            input.classList.add('invalid'); valid = false;
+        } else if (field === 'phone' && !/^[6-9]\d{9}$/.test(val.replace(/\D/g, ''))) {
+            err.textContent = 'Must be 10 digits starting with 6-9.';
+            input.classList.add('invalid'); valid = false;
+        } else if (field === 'aadhaar' && val.replace(/\D/g, '').length !== 12) {
+            err.textContent = 'Must be exactly 12 digits.';
+            input.classList.add('invalid'); valid = false;
         } else {
-            showToast(result.message || "Submission failed.", "error");
+            input.classList.add('valid');
         }
-    } catch {
-        showToast("Could not reach server. Is the backend running?", "error");
-    } finally {
-        state.isSubmitting = false;
-        submitBtn.innerHTML = origHTML;
-        submitBtn.disabled = false;
-    }
-}
-
-// =============================================================================
-// Success Modal
-// =============================================================================
-function showSuccessModal(result, data) {
-    const modal = $("success-modal");
-    const summary = $("modal-summary");
-    const warning = $("modal-warning");
-
-    const rows = [
-        ["Name", data.full_name],
-        ["Email", data.email],
-        ["Phone", data.phone],
-        ["Qualification", data.highest_qualification],
-        ["Graduation Year", data.graduation_year],
-        [data.score_type === "cgpa" ? "CGPA" : "Percentage", data.percentage_cgpa + (data.score_type === "cgpa" ? "" : "%")],
-        ["Screening Score", data.screening_test_score],
-        ["Interview Status", data.interview_status],
-        ["Offer Letter", data.offer_letter_sent],
-        ["Candidate ID", result.candidate?.id?.slice(0, 8) + "…"],
-    ];
-
-    summary.innerHTML = rows.map(([k, v]) => `
-    <div class="summary-row">
-      <span class="summary-key">${k}</span>
-      <span class="summary-val">${v || "—"}</span>
-    </div>`).join("");
-
-    if (result.flagged_for_review) {
-        warning.hidden = false;
-        warning.innerHTML = `🚨 This entry has ${result.exception_count} exceptions and has been flagged for manager review.`;
-    } else {
-        warning.hidden = true;
-    }
-
-    modal.classList.remove("hidden");
-}
-
-function closeModal() {
-    $("success-modal").classList.add("hidden");
-}
-
-// =============================================================================
-// Form Reset
-// =============================================================================
-function resetForm() {
-    $("candidate-form").reset();
-    state.exceptions = {};
-    state.exceptionCount = 0;
-    state.validFields.clear();
-    state.invalidFields.clear();
-    state.scoreType = "percentage";
-
-    // Reset all field states
-    document.querySelectorAll(".field-input").forEach(el => {
-        el.classList.remove("is-valid", "is-invalid", "is-warning");
     });
-    document.querySelectorAll(".field-message").forEach(el => el.textContent = "");
-    document.querySelectorAll("[id$='-exception']").forEach(el => el.hidden = true);
-    document.querySelectorAll("[id$='-exception-toggle']").forEach(el => el.checked = false);
-    document.querySelectorAll("[id$='-rationale']").forEach(el => el.value = "");
-    document.querySelectorAll("[id$='-rationale-panel']").forEach(el => el.hidden = true);
 
-    updateExceptionCounter();
+    return valid;
 }
 
-// =============================================================================
-// Audit Log
-// =============================================================================
-let _lastLog = [];  // Cache for search
+// Real-time field validation on blur
+document.addEventListener('DOMContentLoaded', () => {
+    ['full_name', 'email', 'phone', 'date_of_birth', 'aadhaar'].forEach(field => {
+        const input = document.getElementById(field);
+        if (input) {
+            input.addEventListener('blur', () => {
+                if (currentStep === 1 && input.value.trim()) {
+                    validateField(field, input.value);
+                }
+            });
+        }
+    });
 
-async function loadAuditLog() {
-    const table = $('audit-tbody');
+    // Path selector
+    document.querySelectorAll('.path-card').forEach(card => {
+        card.addEventListener('click', () => {
+            document.querySelectorAll('.path-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            educationPath = card.dataset.path;
+            renderEducationEntries();
+        });
+    });
+});
 
-    table.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted)">Loading…</td></tr>`;
-
+async function validateField(field, value) {
     try {
-        const { log } = await apiGet('/api/audit-log');
-        _lastLog = log;
-        renderAuditLog(log);
-    } catch {
-        table.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--error)">Could not reach server.</td></tr>`;
+        const resp = await fetch(`${API}/api/validate/${field}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [field]: value }),
+        });
+        const data = await resp.json();
+        const input = document.getElementById(field);
+        const err = document.getElementById(`err-${field}`);
+
+        input.classList.remove('valid', 'invalid');
+        if (data.valid) {
+            input.classList.add('valid');
+            err.textContent = '';
+        } else {
+            input.classList.add('invalid');
+            err.textContent = data.error || 'Invalid.';
+        }
+    } catch (e) {
+        // Offline mode — skip server validation
     }
 }
 
-function renderAuditLog(log) {
-    const table = $('audit-tbody');
-    const emptyState = $('audit-empty');
-    const countEl = $('audit-count');
+// ============================================================================
+// STEP 2: EDUCATION ENTRIES
+// ============================================================================
+function renderEducationEntries() {
+    const container = document.getElementById('education-entries');
+    const levels = PATHS[educationPath].levels;
 
-    // Apply filter
-    let filtered = log;
-    if (state.auditFilter === 'flagged') filtered = log.filter(e => e.flagged_for_review);
-    if (state.auditFilter === 'exceptions') filtered = log.filter(e => e.exception_count > 0);
-
-    // Apply search
-    const searchEl = $('audit-search');
-    const searchQuery = searchEl?.value.trim().toLowerCase();
-    if (searchQuery) {
-        filtered = filtered.filter(e =>
-            e.candidate_name?.toLowerCase().includes(searchQuery) ||
-            e.candidate_email?.toLowerCase().includes(searchQuery)
-        );
+    // Initialize entries if path changed
+    if (educationEntries.length === 0 || educationEntries[0]._path !== educationPath) {
+        educationEntries = levels.map(level => ({
+            _path: educationPath,
+            level,
+            board_university: '',
+            stream: level === '10th' ? 'N/A' : '',
+            year_of_passing: '',
+            score: '',
+            score_scale: 'percentage',
+            backlog_count: 0,
+        }));
     }
 
-    // Update count badge
-    if (countEl) countEl.textContent = `${filtered.length} entr${filtered.length === 1 ? 'y' : 'ies'}`;
+    container.innerHTML = educationEntries.map((entry, i) => `
+    <div class="entry-block" id="edu-entry-${i}">
+      <div class="entry-block__header">
+        <span class="entry-block__title">${entry.level} Level</span>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Board / University <span class="form-label__required">*</span></label>
+          <input type="text" class="form-input" id="edu-board-${i}"
+            value="${entry.board_university}" placeholder="e.g. CBSE, IIT Gandhinagar"
+            oninput="updateEduEntry(${i}, 'board_university', this.value)"
+            list="boards-list">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Stream</label>
+          <select class="form-select" id="edu-stream-${i}"
+            onchange="updateEduEntry(${i}, 'stream', this.value)">
+            ${STREAMS.map(s => `<option value="${s}" ${entry.stream === s ? 'selected' : ''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Year of Passing <span class="form-label__required">*</span></label>
+          <input type="number" class="form-input" id="edu-year-${i}"
+            value="${entry.year_of_passing}" placeholder="e.g. 2022" min="2000" max="2030"
+            oninput="updateEduEntry(${i}, 'year_of_passing', parseInt(this.value))">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Score <span class="form-label__required">*</span></label>
+          <div style="display:flex; gap:0.5rem;">
+            <input type="number" class="form-input" id="edu-score-${i}" step="0.01"
+              value="${entry.score}" placeholder="Score"
+              oninput="updateEduEntry(${i}, 'score', parseFloat(this.value))" style="flex:1;">
+            <select class="form-select" id="edu-scale-${i}" style="width:110px;"
+              onchange="updateEduEntry(${i}, 'score_scale', this.value)">
+              ${SCORE_SCALES.map(s => `<option value="${s}" ${entry.score_scale === s ? 'selected' : ''}>${s === 'percentage' ? '%' : s === 'cgpa_10' ? 'CGPA/10' : 'CGPA/4'}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        ${['UG', 'Diploma'].includes(entry.level) ? `
+        <div class="form-group">
+          <label class="form-label">Backlogs</label>
+          <input type="number" class="form-input" id="edu-backlog-${i}"
+            value="${entry.backlog_count}" min="0"
+            oninput="updateEduEntry(${i}, 'backlog_count', parseInt(this.value) || 0)">
+        </div>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
 
-    if (filtered.length === 0) {
-        table.innerHTML = "";
-        if (emptyState) emptyState.hidden = false;
+function updateEduEntry(index, field, value) {
+    educationEntries[index][field] = value;
+}
+
+function validateStep2() {
+    let valid = true;
+    educationEntries.forEach((entry, i) => {
+        if (!entry.board_university) { valid = false; showToast(`${entry.level}: Board/University is required.`, 'error'); }
+        if (!entry.year_of_passing) { valid = false; showToast(`${entry.level}: Year is required.`, 'error'); }
+        if (!entry.score && entry.score !== 0) { valid = false; showToast(`${entry.level}: Score is required.`, 'error'); }
+    });
+    return valid;
+}
+
+// ============================================================================
+// STEP 3: WORK ENTRIES
+// ============================================================================
+function addWorkEntry() {
+    workEntries.push({
+        company_name: '', designation: '', domain: 'IT',
+        start_date: '', end_date: '', employment_type: 'Full-time',
+        skills: '',
+    });
+    renderWorkEntries();
+}
+
+function removeWorkEntry(index) {
+    workEntries.splice(index, 1);
+    renderWorkEntries();
+}
+
+function renderWorkEntries() {
+    const container = document.getElementById('work-entries');
+    if (workEntries.length === 0) {
+        container.innerHTML = '<p class="text-sm text-muted text-center mb-1">No work experience added. Click below to add one, or skip if you\'re a fresher.</p>';
         return;
     }
-
-    if (emptyState) emptyState.hidden = true;
-
-    table.innerHTML = filtered.map(entry => {
-        const dt = new Date(entry.timestamp);
-        const timeStr = dt.toLocaleString("en-IN", {
-            day: "2-digit", month: "short", year: "numeric",
-            hour: "2-digit", minute: "2-digit"
-        });
-
-        const exBadge = entry.exception_count > 0
-            ? `<span class="badge badge-warning">⚠️ ${entry.exception_count} exception${entry.exception_count > 1 ? "s" : ""}</span>`
-            : `<span class="badge badge-neutral">None</span>`;
-
-        const flagBadge = entry.flagged_for_review
-            ? `<span class="badge badge-error">🚨 Flagged</span>`
-            : `<span class="badge badge-success">✓ Clean</span>`;
-
-        const actionBadge = `<span class="badge badge-info">📋 ${entry.action}</span>`;
-
-        const excDetails = (entry.exceptions || []).map(ex =>
-            `<div style="font-size:0.72rem;color:var(--text-muted)">• <b>${ex.field.replace(/_/g, " ")}</b>: ${ex.rationale?.slice(0, 60)}…</div>`
-        ).join("");
-
-        return `
-      <tr>
-        <td style="white-space:nowrap;color:var(--text-primary);font-weight:500">${entry.candidate_name}</td>
-        <td style="color:var(--text-muted)">${entry.candidate_email}</td>
-        <td>${actionBadge}</td>
-        <td>${exBadge}${excDetails ? `<div style="margin-top:4px">${excDetails}</div>` : ""}</td>
-        <td>${flagBadge}</td>
-        <td style="white-space:nowrap;color:var(--text-muted);font-size:0.78rem">${timeStr}</td>
-        <td style="font-size:0.72rem;color:var(--text-muted)">${entry.candidate_id?.slice(0, 8)}…</td>
-      </tr>`;
-    }).join("");
+    container.innerHTML = workEntries.map((entry, i) => `
+    <div class="entry-block" id="work-entry-${i}">
+      <div class="entry-block__header">
+        <span class="entry-block__title">Experience ${i + 1}</span>
+        <button class="entry-block__remove" onclick="removeWorkEntry(${i})">✕ Remove</button>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Company <span class="form-label__required">*</span></label>
+          <input type="text" class="form-input" value="${entry.company_name}" placeholder="e.g. TCS"
+            oninput="workEntries[${i}].company_name=this.value">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Designation <span class="form-label__required">*</span></label>
+          <input type="text" class="form-input" value="${entry.designation}" placeholder="e.g. Software Engineer"
+            oninput="workEntries[${i}].designation=this.value">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Domain</label>
+          <select class="form-select" onchange="workEntries[${i}].domain=this.value">
+            ${DOMAINS.map(d => `<option value="${d}" ${entry.domain === d ? 'selected' : ''}>${d}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <select class="form-select" onchange="workEntries[${i}].employment_type=this.value">
+            ${EMP_TYPES.map(t => `<option value="${t}" ${entry.employment_type === t ? 'selected' : ''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Start Date <span class="form-label__required">*</span></label>
+          <input type="date" class="form-input" value="${entry.start_date}"
+            onchange="workEntries[${i}].start_date=this.value">
+        </div>
+        <div class="form-group">
+          <label class="form-label">End Date <small class="text-muted">(empty = current)</small></label>
+          <input type="date" class="form-input" value="${entry.end_date}"
+            onchange="workEntries[${i}].end_date=this.value">
+        </div>
+        <div class="form-group form-group--full">
+          <label class="form-label">Skills <small class="text-muted">(comma-separated)</small></label>
+          <input type="text" class="form-input" value="${entry.skills}" placeholder="e.g. Python, Flask, AWS"
+            oninput="workEntries[${i}].skills=this.value">
+        </div>
+      </div>
+    </div>
+  `).join('');
 }
 
-// =============================================================================
-// Dashboard
-// =============================================================================
-async function loadDashboard() {
+function validateStep3() {
+    let valid = true;
+    workEntries.forEach((entry, i) => {
+        if (!entry.company_name.trim()) { valid = false; showToast(`Job ${i + 1}: Company name required.`, 'error'); }
+        if (!entry.designation.trim()) { valid = false; showToast(`Job ${i + 1}: Designation required.`, 'error'); }
+        if (!entry.start_date) { valid = false; showToast(`Job ${i + 1}: Start date required.`, 'error'); }
+    });
+    return valid;
+}
+
+// ============================================================================
+// STEP 4: REVIEW
+// ============================================================================
+function renderReview() {
+    const data = getFormData();
+    let html = '';
+
+    // Personal
+    html += `<div class="review-section">
+    <div class="review-section__title">👤 Personal Info</div>
+    ${reviewRow('Name', data.full_name)}
+    ${reviewRow('Email', data.email)}
+    ${reviewRow('Phone', data.phone)}
+    ${reviewRow('DOB', data.date_of_birth)}
+    ${reviewRow('Aadhaar', maskAadhaar(data.aadhaar))}
+  </div>`;
+
+    // Education
+    html += `<div class="review-section">
+    <div class="review-section__title">🎓 Education (Path ${educationPath})</div>
+    ${educationEntries.map(e =>
+        reviewRow(e.level, `${e.board_university} • ${e.score} (${e.score_scale === 'percentage' ? '%' : e.score_scale})${e.backlog_count ? ` • ${e.backlog_count} backlog(s)` : ''}`)
+    ).join('')}
+  </div>`;
+
+    // Work
+    if (workEntries.length > 0) {
+        html += `<div class="review-section">
+      <div class="review-section__title">💼 Work Experience</div>
+      ${workEntries.map(w =>
+            reviewRow(w.company_name, `${w.designation} • ${w.domain} • ${w.start_date} to ${w.end_date || 'Present'}`)
+        ).join('')}
+    </div>`;
+    }
+
+    document.getElementById('review-content').innerHTML = html;
+
+    // Run preview validation
+    previewValidation(data);
+}
+
+function reviewRow(label, value) {
+    return `<div class="review-row">
+    <span class="review-row__label">${label}</span>
+    <span class="review-row__value">${value || '—'}</span>
+  </div>`;
+}
+
+function maskAadhaar(val) {
+    if (!val || val.length < 4) return val;
+    return '●●●● ●●●● ' + val.slice(-4);
+}
+
+async function previewValidation(data) {
     try {
-        const data = await apiGet("/api/dashboard");
-        $("stat-total").textContent = data.total_submissions ?? 0;
-        $("stat-flagged").textContent = data.flagged_count ?? 0;
-        $("stat-rate").textContent = (data.exception_rate ?? 0) + "%";
-    } catch {
-        // silently fail
+        const resp = await fetch(`${API}/api/validate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        const result = await resp.json();
+
+        const flagsDiv = document.getElementById('review-flags');
+        if (result.tier2_flags && result.tier2_flags.length > 0) {
+            flagsDiv.classList.remove('hidden');
+            flagsDiv.innerHTML = `
+        <div class="review-section">
+          <div class="review-section__title">⚠️ Flags (${result.tier2_flags.length})</div>
+          <ul class="flags-list">
+            ${result.tier2_flags.map(f => `
+              <li class="flags-list__item">⚠ ${f.message}</li>
+            `).join('')}
+          </ul>
+          <p class="text-sm text-muted mt-1">These are informational flags and won't block your submission.</p>
+        </div>`;
+        } else {
+            flagsDiv.classList.add('hidden');
+        }
+
+        if (!result.valid) {
+            const errs = Object.entries(result.tier1_errors || {});
+            if (errs.length > 0) {
+                showToast(`${errs.length} validation error(s) found. Please go back and fix.`, 'error');
+            }
+        }
+    } catch (e) {
+        // Offline — skip preview
     }
 }
 
-// =============================================================================
-// Theme Toggle
-// =============================================================================
-function initThemeToggle() {
-    const btn = $("theme-toggle");
-    const saved = localStorage.getItem("admitguard-theme") || "dark";
-    setTheme(saved);
-
-    btn.addEventListener("click", () => {
-        const current = document.documentElement.getAttribute("data-theme") || "dark";
-        setTheme(current === "dark" ? "light" : "dark");
-    });
+// ============================================================================
+// SUBMISSION
+// ============================================================================
+function getFormData() {
+    return {
+        full_name: document.getElementById('full_name').value.trim(),
+        email: document.getElementById('email').value.trim(),
+        phone: document.getElementById('phone').value.trim(),
+        date_of_birth: document.getElementById('date_of_birth').value,
+        aadhaar: document.getElementById('aadhaar').value.trim(),
+        education_path: educationPath,
+        education_entries: educationEntries.map(e => ({
+            level: e.level,
+            board_university: e.board_university,
+            stream: e.stream,
+            year_of_passing: e.year_of_passing,
+            score: e.score,
+            score_scale: e.score_scale,
+            backlog_count: e.backlog_count || 0,
+        })),
+        work_entries: workEntries.map(w => ({
+            company_name: w.company_name,
+            designation: w.designation,
+            domain: w.domain,
+            start_date: w.start_date,
+            end_date: w.end_date,
+            employment_type: w.employment_type,
+            skills: typeof w.skills === 'string' ? w.skills.split(',').map(s => s.trim()).filter(Boolean) : w.skills,
+        })),
+    };
 }
 
-function setTheme(theme) {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("admitguard-theme", theme);
-    const btn = $("theme-toggle");
-    if (btn) btn.innerHTML = theme === "dark"
-        ? `🌙 <span>Dark</span>`
-        : `☀️ <span>Light</span>`;
-}
+async function submitApplication() {
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Submitting...';
+    showLoading('Processing your application through 3-tier validation...');
 
-// =============================================================================
-// Tab Navigation
-// =============================================================================
-function initTabs() {
-    const tabs = document.querySelectorAll(".nav-tab");
-    const panels = document.querySelectorAll(".tab-panel");
-
-    tabs.forEach(tab => {
-        tab.addEventListener("click", () => {
-            tabs.forEach(t => t.classList.remove("active"));
-            panels.forEach(p => p.classList.remove("active"));
-            tab.classList.add("active");
-            const panelId = tab.getAttribute("data-panel");
-            const panel = $(panelId);
-            if (panel) panel.classList.add("active");
-
-            // Load data when switching tabs
-            if (panelId === "tab-audit") loadAuditLog();
-            if (panelId === "tab-dashboard") loadDashboard();
+    try {
+        const data = getFormData();
+        const resp = await fetch(`${API}/api/candidates`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
         });
-    });
+
+        const result = await resp.json();
+        hideLoading();
+
+        if (resp.status === 201) {
+            submissionResult = result;
+            renderConfirmation(result);
+            goToStep(5);
+            showToast('Application submitted successfully!', 'success');
+        } else if (resp.status === 422) {
+            // Tier 1 rejection
+            const errors = result.errors || {};
+            const msgs = Object.values(errors).slice(0, 3).join('\n');
+            showToast(`Validation failed:\n${msgs}`, 'error');
+        } else {
+            showToast(result.error || 'Submission failed.', 'error');
+        }
+    } catch (e) {
+        hideLoading();
+        showToast('Network error. Please try again.', 'error');
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '✓ Submit Application';
 }
 
-// =============================================================================
-// Audit Filter Buttons
-// =============================================================================
-function initAuditFilters() {
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            state.auditFilter = btn.getAttribute('data-filter');
-            const { log } = await apiGet('/api/audit-log');
-            _lastLog = log;
-            renderAuditLog(log);
-        });
-    });
+// ============================================================================
+// STEP 5: CONFIRMATION
+// ============================================================================
+function renderConfirmation(result) {
+    const intel = result.intelligence || {};
+    const risk = intel.risk_score || 0;
+    const category = intel.category || 'Pending';
+    const dq = intel.data_quality || {};
 
-    // Live search
-    const searchEl = $('audit-search');
-    if (searchEl) {
-        searchEl.addEventListener('input', () => renderAuditLog(_lastLog));
+    // Risk gauge
+    let gaugeColor = '#10b981'; // green
+    if (risk > 60) gaugeColor = '#ef4444';
+    else if (risk > 30) gaugeColor = '#f59e0b';
+
+    document.getElementById('risk-gauge').innerHTML = `
+    <div class="risk-gauge__circle" style="--gauge-pct:${risk}; --gauge-color:${gaugeColor};">
+      <div class="risk-gauge__inner">
+        <span class="risk-gauge__score" style="color:${gaugeColor}">${risk}</span>
+        <span class="risk-gauge__label">Risk Score</span>
+      </div>
+    </div>
+    <div class="risk-gauge__category">
+      <span class="badge badge--${category === 'Strong Fit' ? 'strong' : category === 'Needs Review' ? 'review' : category === 'Weak Fit' ? 'weak' : 'pending'}">${category}</span>
+    </div>
+  `;
+
+    // Intelligence details
+    document.getElementById('confirm-intel').innerHTML = `
+    <div class="review-section">
+      <div class="review-section__title">📊 Intelligence Report</div>
+      ${reviewRow('Category', category)}
+      ${reviewRow('Risk Score', `${risk}/100`)}
+      ${reviewRow('Data Quality', `${dq.score || 0}/100`)}
+      ${reviewRow('Experience', intel.experience_bucket || 'Fresher')}
+      ${reviewRow('Confidence', intel.category_confidence || 'N/A')}
+      ${intel.anomaly_narration ? `
+        <div class="mt-1" style="padding:0.8rem; background:var(--bg-glass); border-radius:var(--radius-sm); font-size:0.85rem; color:var(--text-secondary);">
+          <strong>AI Analysis:</strong> ${intel.anomaly_narration}
+        </div>` : ''}
+    </div>
+  `;
+
+    // Flags
+    const flags = result.tier2_flags || [];
+    const llmFlags = result.llm_flags || [];
+    if (flags.length > 0 || llmFlags.length > 0) {
+        document.getElementById('confirm-flags').innerHTML = `
+      <div class="review-section">
+        <div class="review-section__title">⚠️ Flags (${flags.length + llmFlags.length})</div>
+        <ul class="flags-list">
+          ${flags.map(f => `<li class="flags-list__item">⚠ ${f.message}</li>`).join('')}
+          ${llmFlags.map(f => `<li class="flags-list__item flags-list__item--llm">🤖 ${f.message}</li>`).join('')}
+        </ul>
+      </div>`;
+    }
+
+    // Confirm message
+    if (result.warning) {
+        document.getElementById('confirm-message').textContent = result.warning;
     }
 }
 
-// =============================================================================
-// Attach field validation listeners
-// =============================================================================
-function attachFieldListeners() {
-    const strictFields = [
-        "full_name", "email", "phone",
-        "highest_qualification", "interview_status",
-        "aadhaar", "offer_letter_sent",
-    ];
-
-    const softFields = [
-        "date_of_birth", "graduation_year",
-        "percentage_cgpa", "screening_test_score",
-    ];
-
-    const allFields = [...strictFields, ...softFields];
-
-    allFields.forEach(field => {
-        const el = $(field);
-        if (!el) return;
-        el.addEventListener("blur", () => validateField(field));
-        if (field === "offer_letter_sent") {
-            el.addEventListener("change", () => {
-                validateField("offer_letter_sent");
-                validateField("interview_status");
-            });
-        }
-        if (field === "interview_status") {
-            el.addEventListener("change", () => {
-                validateField("interview_status");
-                validateField("offer_letter_sent");
-            });
-        }
-    });
-
-    // Init soft field exception panels
-    softFields.forEach(initExceptionPanel);
+// ============================================================================
+// CHAT
+// ============================================================================
+function toggleChat() {
+    document.getElementById('chat-panel').classList.toggle('open');
 }
 
-// =============================================================================
-// Boot
-// =============================================================================
-document.addEventListener("DOMContentLoaded", () => {
-    initThemeToggle();
-    initTabs();
-    initScoreTypeToggle();
-    attachFieldListeners();
-    initAuditFilters();
-    updateExceptionCounter();
+async function sendChat() {
+    const input = document.getElementById('chat-input');
+    const question = input.value.trim();
+    if (!question) return;
 
-    // Form submit
-    $('candidate-form')?.addEventListener('submit', handleSubmit);
+    addChatMsg(question, 'user');
+    input.value = '';
 
-    // Ctrl+Enter shortcut to submit
-    document.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-            e.preventDefault();
-            $('submit-btn')?.click();
-        }
+    try {
+        const resp = await fetch(`${API}/api/llm/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                question,
+                form_context: { education_path: educationPath, step: currentStep },
+            }),
+        });
+        const data = await resp.json();
+        addChatMsg(data.answer || 'Sorry, I couldn\'t process that.', 'bot');
+    } catch (e) {
+        addChatMsg('I\'m offline right now. Try again later!', 'bot');
+    }
+}
+
+function addChatMsg(text, role) {
+    const container = document.getElementById('chat-messages');
+    const div = document.createElement('div');
+    div.className = `chat-msg chat-msg--${role}`;
+    div.textContent = text;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+// ============================================================================
+// FIELD EXPLAINER
+// ============================================================================
+async function explainField(field) {
+    try {
+        const resp = await fetch(`${API}/api/llm/explain`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ field }),
+        });
+        const data = await resp.json();
+        showToast(data.explanation || `This is the ${field} field.`, 'warning');
+    } catch (e) {
+        const fallbacks = {
+            aadhaar: 'Aadhaar is a 12-digit unique ID issued by UIDAI.',
+            education_path: 'Choose your education pathway: A (Standard), B (Diploma), or C (Vocational).',
+        };
+        showToast(fallbacks[field] || `Enter your ${field.replace(/_/g, ' ')}.`, 'warning');
+    }
+}
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+function showToast(message, type = 'success') {
+    const existing = document.querySelectorAll('.toast');
+    existing.forEach(t => t.remove());
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
+}
+
+function showLoading(text) {
+    document.getElementById('loading-text').textContent = text || 'Processing...';
+    document.getElementById('loading').classList.remove('hidden');
+}
+
+function hideLoading() {
+    document.getElementById('loading').classList.add('hidden');
+}
+
+function resetForm() {
+    currentStep = 1;
+    educationPath = 'A';
+    educationEntries = [];
+    workEntries = [];
+    submissionResult = null;
+
+    // Reset form fields
+    ['full_name', 'email', 'phone', 'date_of_birth', 'aadhaar'].forEach(f => {
+        const el = document.getElementById(f);
+        if (el) { el.value = ''; el.classList.remove('valid', 'invalid'); }
+        const err = document.getElementById(`err-${f}`);
+        if (err) err.textContent = '';
     });
 
-    // Reset button
-    $('reset-btn')?.addEventListener('click', () => {
-        if (confirm('Clear all form data?')) resetForm();
-    });
+    // Reset path selector
+    document.querySelectorAll('.path-card').forEach(c => c.classList.remove('selected'));
+    document.querySelector('.path-card[data-path="A"]').classList.add('selected');
 
-    // Modal close
-    $("modal-close")?.addEventListener("click", closeModal);
-    $("modal-new-btn")?.addEventListener("click", closeModal);
-    $("success-modal")?.addEventListener("click", (e) => {
-        if (e.target === $("success-modal")) closeModal();
-    });
+    // Reset containers
+    document.getElementById('education-entries').innerHTML = '';
+    document.getElementById('work-entries').innerHTML = '';
+    document.getElementById('review-content').innerHTML = '';
+    document.getElementById('review-flags').innerHTML = '';
+    document.getElementById('review-flags').classList.add('hidden');
+    document.getElementById('risk-gauge').innerHTML = '';
+    document.getElementById('confirm-intel').innerHTML = '';
+    document.getElementById('confirm-flags').innerHTML = '';
 
-    // Initial dashboard load
-    loadDashboard();
+    goToStep(1);
+}
+
+// Initialize work entries view
+document.addEventListener('DOMContentLoaded', () => {
+    renderWorkEntries();
 });
